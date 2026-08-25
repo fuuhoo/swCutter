@@ -4,11 +4,17 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/simple.dart';
+import 'api/task_api.dart';
+
 import 'dart:async';
 import 'dart:convert';
+
+import 'engine/alpha.dart';
+import 'engine/planner.dart';
 import 'frb_generated.dart';
 import 'frb_generated.io.dart'
     if (dart.library.js_interop) 'frb_generated.web.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 /// Main entrypoint of the Rust API
@@ -66,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -1918914929;
+  int get rustContentHash => -772999124;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -78,9 +84,38 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
+  Future<bool> crateApiTaskApiCancelTask({required BigInt id});
+
+  Future<List<LevelEstimate>> crateApiTaskApiEstimatePyramid({
+    required int width,
+    required int height,
+    required int tileSize,
+    int? zmin,
+    int? zmax,
+  });
+
+  Future<int> crateApiTaskApiGetMaxConcurrency();
+
   String crateApiSimpleGreet({required String name});
 
   Future<void> crateApiSimpleInitApp();
+
+  Future<List<TaskDto>> crateApiTaskApiListTasks();
+
+  Future<Uint8List> crateApiTaskApiMakePreview({
+    required String source,
+    required int maxPx,
+  });
+
+  Future<ImageBrief> crateApiTaskApiReadImageInfo({required String path});
+
+  Future<bool> crateApiTaskApiRemoveTask({required BigInt id});
+
+  Future<void> crateApiTaskApiSetMaxConcurrency({required int n});
+
+  Future<BigInt> crateApiTaskApiStartTask({required TaskConfig cfg});
+
+  Stream<TaskEvent> crateApiTaskApiSubscribeEvents();
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -92,13 +127,109 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
+  Future<bool> crateApiTaskApiCancelTask({required BigInt id}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(id, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 1,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiTaskApiCancelTaskConstMeta,
+        argValues: [id],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTaskApiCancelTaskConstMeta =>
+      const TaskConstMeta(debugName: "cancel_task", argNames: ["id"]);
+
+  @override
+  Future<List<LevelEstimate>> crateApiTaskApiEstimatePyramid({
+    required int width,
+    required int height,
+    required int tileSize,
+    int? zmin,
+    int? zmax,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(width, serializer);
+          sse_encode_u_32(height, serializer);
+          sse_encode_u_32(tileSize, serializer);
+          sse_encode_opt_box_autoadd_u_32(zmin, serializer);
+          sse_encode_opt_box_autoadd_u_32(zmax, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 2,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_level_estimate,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiTaskApiEstimatePyramidConstMeta,
+        argValues: [width, height, tileSize, zmin, zmax],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTaskApiEstimatePyramidConstMeta =>
+      const TaskConstMeta(
+        debugName: "estimate_pyramid",
+        argNames: ["width", "height", "tileSize", "zmin", "zmax"],
+      );
+
+  @override
+  Future<int> crateApiTaskApiGetMaxConcurrency() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_32,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiTaskApiGetMaxConcurrencyConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTaskApiGetMaxConcurrencyConstMeta =>
+      const TaskConstMeta(debugName: "get_max_concurrency", argNames: []);
+
+  @override
   String crateApiSimpleGreet({required String name}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -123,7 +254,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 2,
+            funcId: 5,
             port: port_,
           );
         },
@@ -141,6 +272,223 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiSimpleInitAppConstMeta =>
       const TaskConstMeta(debugName: "init_app", argNames: []);
 
+  @override
+  Future<List<TaskDto>> crateApiTaskApiListTasks() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_task_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiTaskApiListTasksConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTaskApiListTasksConstMeta =>
+      const TaskConstMeta(debugName: "list_tasks", argNames: []);
+
+  @override
+  Future<Uint8List> crateApiTaskApiMakePreview({
+    required String source,
+    required int maxPx,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(source, serializer);
+          sse_encode_u_32(maxPx, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 7,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiTaskApiMakePreviewConstMeta,
+        argValues: [source, maxPx],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTaskApiMakePreviewConstMeta => const TaskConstMeta(
+    debugName: "make_preview",
+    argNames: ["source", "maxPx"],
+  );
+
+  @override
+  Future<ImageBrief> crateApiTaskApiReadImageInfo({required String path}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 8,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_image_brief,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiTaskApiReadImageInfoConstMeta,
+        argValues: [path],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTaskApiReadImageInfoConstMeta =>
+      const TaskConstMeta(debugName: "read_image_info", argNames: ["path"]);
+
+  @override
+  Future<bool> crateApiTaskApiRemoveTask({required BigInt id}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(id, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 9,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiTaskApiRemoveTaskConstMeta,
+        argValues: [id],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTaskApiRemoveTaskConstMeta =>
+      const TaskConstMeta(debugName: "remove_task", argNames: ["id"]);
+
+  @override
+  Future<void> crateApiTaskApiSetMaxConcurrency({required int n}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(n, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 10,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiTaskApiSetMaxConcurrencyConstMeta,
+        argValues: [n],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTaskApiSetMaxConcurrencyConstMeta =>
+      const TaskConstMeta(debugName: "set_max_concurrency", argNames: ["n"]);
+
+  @override
+  Future<BigInt> crateApiTaskApiStartTask({required TaskConfig cfg}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_box_autoadd_task_config(cfg, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 11,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_64,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiTaskApiStartTaskConstMeta,
+        argValues: [cfg],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTaskApiStartTaskConstMeta =>
+      const TaskConstMeta(debugName: "start_task", argNames: ["cfg"]);
+
+  @override
+  Stream<TaskEvent> crateApiTaskApiSubscribeEvents() {
+    final sink = RustStreamSink<TaskEvent>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_StreamSink_task_event_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 12,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_AnyhowException,
+          ),
+          constMeta: kCrateApiTaskApiSubscribeEventsConstMeta,
+          argValues: [sink],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
+  TaskConstMeta get kCrateApiTaskApiSubscribeEventsConstMeta =>
+      const TaskConstMeta(debugName: "subscribe_events", argNames: ["sink"]);
+
+  @protected
+  AnyhowException dco_decode_AnyhowException(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return AnyhowException(raw as String);
+  }
+
+  @protected
+  RustStreamSink<TaskEvent> dco_decode_StreamSink_task_event_Sse(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    throw UnimplementedError();
+  }
+
   @protected
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -148,9 +496,246 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AlphaMode dco_decode_alpha_mode(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return AlphaMode_Keep();
+      case 1:
+        return AlphaMode_Threshold(below: dco_decode_u_8(raw[1]));
+      case 2:
+        return AlphaMode_ColorKey(
+          r: dco_decode_u_8(raw[1]),
+          g: dco_decode_u_8(raw[2]),
+          b: dco_decode_u_8(raw[3]),
+          tolerance: dco_decode_u_8(raw[4]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
+  TaskConfig dco_decode_box_autoadd_task_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_task_config(raw);
+  }
+
+  @protected
+  TaskSummary dco_decode_box_autoadd_task_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_task_summary(raw);
+  }
+
+  @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  int dco_decode_i_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  ImageBrief dco_decode_image_brief(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    return ImageBrief(
+      width: dco_decode_u_32(arr[0]),
+      height: dco_decode_u_32(arr[1]),
+      pixelFormat: dco_decode_String(arr[2]),
+      compression: dco_decode_String(arr[3]),
+      chunkType: dco_decode_String(arr[4]),
+      chunkHint: dco_decode_list_prim_u_32_strict(arr[5]),
+      hasAlpha: dco_decode_bool(arr[6]),
+      rgbaBytes: dco_decode_u_64(arr[7]),
+      maxLevel: dco_decode_u_32(arr[8]),
+    );
+  }
+
+  @protected
+  LevelEstimate dco_decode_level_estimate(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return LevelEstimate(
+      level: dco_decode_u_32(arr[0]),
+      width: dco_decode_u_32(arr[1]),
+      height: dco_decode_u_32(arr[2]),
+      tilesX: dco_decode_u_32(arr[3]),
+      tilesY: dco_decode_u_32(arr[4]),
+      tiles: dco_decode_u_64(arr[5]),
+    );
+  }
+
+  @protected
+  List<LevelEstimate> dco_decode_list_level_estimate(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_level_estimate).toList();
+  }
+
+  @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Uint32List;
+  }
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  List<TaskDto> dco_decode_list_task_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_task_dto).toList();
+  }
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
+  }
+
+  @protected
+  Resample dco_decode_resample(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Resample.values[raw as int];
+  }
+
+  @protected
+  Scheme dco_decode_scheme(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Scheme.values[raw as int];
+  }
+
+  @protected
+  TaskConfig dco_decode_task_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    return TaskConfig(
+      source: dco_decode_String(arr[0]),
+      output: dco_decode_String(arr[1]),
+      tileSize: dco_decode_u_32(arr[2]),
+      zmin: dco_decode_opt_box_autoadd_u_32(arr[3]),
+      zmax: dco_decode_opt_box_autoadd_u_32(arr[4]),
+      scheme: dco_decode_scheme(arr[5]),
+      alpha: dco_decode_alpha_mode(arr[6]),
+      resample: dco_decode_resample(arr[7]),
+    );
+  }
+
+  @protected
+  TaskDto dco_decode_task_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 16)
+      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
+    return TaskDto(
+      id: dco_decode_u_64(arr[0]),
+      source: dco_decode_String(arr[1]),
+      output: dco_decode_String(arr[2]),
+      tileSize: dco_decode_u_32(arr[3]),
+      scheme: dco_decode_scheme(arr[4]),
+      alpha: dco_decode_alpha_mode(arr[5]),
+      resample: dco_decode_resample(arr[6]),
+      zmin: dco_decode_opt_box_autoadd_u_32(arr[7]),
+      zmax: dco_decode_opt_box_autoadd_u_32(arr[8]),
+      status: dco_decode_String(arr[9]),
+      level: dco_decode_u_32(arr[10]),
+      tilesDone: dco_decode_u_64(arr[11]),
+      totalTiles: dco_decode_u_64(arr[12]),
+      bytesWritten: dco_decode_u_64(arr[13]),
+      elapsedMs: dco_decode_u_64(arr[14]),
+      error: dco_decode_opt_String(arr[15]),
+    );
+  }
+
+  @protected
+  TaskEvent dco_decode_task_event(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return TaskEvent(
+      taskId: dco_decode_u_64(arr[0]),
+      kind: dco_decode_task_event_kind(arr[1]),
+    );
+  }
+
+  @protected
+  TaskEventKind dco_decode_task_event_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return TaskEventKind_StatusChanged(status: dco_decode_String(raw[1]));
+      case 1:
+        return TaskEventKind_Started(totalTiles: dco_decode_u_64(raw[1]));
+      case 2:
+        return TaskEventKind_LevelStart(level: dco_decode_u_32(raw[1]));
+      case 3:
+        return TaskEventKind_Progress(
+          level: dco_decode_u_32(raw[1]),
+          tilesDone: dco_decode_u_64(raw[2]),
+          totalTiles: dco_decode_u_64(raw[3]),
+          bytesWritten: dco_decode_u_64(raw[4]),
+        );
+      case 4:
+        return TaskEventKind_Finished(
+          summary: dco_decode_box_autoadd_task_summary(raw[1]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  TaskSummary dco_decode_task_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return TaskSummary(
+      tilesDone: dco_decode_u_64(arr[0]),
+      totalTiles: dco_decode_u_64(arr[1]),
+      bytesWritten: dco_decode_u_64(arr[2]),
+      elapsedMs: dco_decode_u_64(arr[3]),
+      cancelled: dco_decode_bool(arr[4]),
+      error: dco_decode_opt_String(arr[5]),
+    );
+  }
+
+  @protected
+  int dco_decode_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeU64(raw);
   }
 
   @protected
@@ -166,6 +751,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_String(deserializer);
+    return AnyhowException(inner);
+  }
+
+  @protected
+  RustStreamSink<TaskEvent> sse_decode_StreamSink_task_event_Sse(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    throw UnimplementedError('Unreachable ()');
+  }
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_prim_u_8_strict(deserializer);
@@ -173,10 +773,317 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AlphaMode sse_decode_alpha_mode(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return AlphaMode_Keep();
+      case 1:
+        var var_below = sse_decode_u_8(deserializer);
+        return AlphaMode_Threshold(below: var_below);
+      case 2:
+        var var_r = sse_decode_u_8(deserializer);
+        var var_g = sse_decode_u_8(deserializer);
+        var var_b = sse_decode_u_8(deserializer);
+        var var_tolerance = sse_decode_u_8(deserializer);
+        return AlphaMode_ColorKey(
+          r: var_r,
+          g: var_g,
+          b: var_b,
+          tolerance: var_tolerance,
+        );
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  bool sse_decode_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  TaskConfig sse_decode_box_autoadd_task_config(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_task_config(deserializer));
+  }
+
+  @protected
+  TaskSummary sse_decode_box_autoadd_task_summary(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_task_summary(deserializer));
+  }
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_32(deserializer));
+  }
+
+  @protected
+  int sse_decode_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getInt32();
+  }
+
+  @protected
+  ImageBrief sse_decode_image_brief(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_width = sse_decode_u_32(deserializer);
+    var var_height = sse_decode_u_32(deserializer);
+    var var_pixelFormat = sse_decode_String(deserializer);
+    var var_compression = sse_decode_String(deserializer);
+    var var_chunkType = sse_decode_String(deserializer);
+    var var_chunkHint = sse_decode_list_prim_u_32_strict(deserializer);
+    var var_hasAlpha = sse_decode_bool(deserializer);
+    var var_rgbaBytes = sse_decode_u_64(deserializer);
+    var var_maxLevel = sse_decode_u_32(deserializer);
+    return ImageBrief(
+      width: var_width,
+      height: var_height,
+      pixelFormat: var_pixelFormat,
+      compression: var_compression,
+      chunkType: var_chunkType,
+      chunkHint: var_chunkHint,
+      hasAlpha: var_hasAlpha,
+      rgbaBytes: var_rgbaBytes,
+      maxLevel: var_maxLevel,
+    );
+  }
+
+  @protected
+  LevelEstimate sse_decode_level_estimate(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_level = sse_decode_u_32(deserializer);
+    var var_width = sse_decode_u_32(deserializer);
+    var var_height = sse_decode_u_32(deserializer);
+    var var_tilesX = sse_decode_u_32(deserializer);
+    var var_tilesY = sse_decode_u_32(deserializer);
+    var var_tiles = sse_decode_u_64(deserializer);
+    return LevelEstimate(
+      level: var_level,
+      width: var_width,
+      height: var_height,
+      tilesX: var_tilesX,
+      tilesY: var_tilesY,
+      tiles: var_tiles,
+    );
+  }
+
+  @protected
+  List<LevelEstimate> sse_decode_list_level_estimate(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <LevelEstimate>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_level_estimate(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint32List(len_);
+  }
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  List<TaskDto> sse_decode_list_task_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <TaskDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_task_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_32(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  Resample sse_decode_resample(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return Resample.values[inner];
+  }
+
+  @protected
+  Scheme sse_decode_scheme(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return Scheme.values[inner];
+  }
+
+  @protected
+  TaskConfig sse_decode_task_config(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_source = sse_decode_String(deserializer);
+    var var_output = sse_decode_String(deserializer);
+    var var_tileSize = sse_decode_u_32(deserializer);
+    var var_zmin = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_zmax = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_scheme = sse_decode_scheme(deserializer);
+    var var_alpha = sse_decode_alpha_mode(deserializer);
+    var var_resample = sse_decode_resample(deserializer);
+    return TaskConfig(
+      source: var_source,
+      output: var_output,
+      tileSize: var_tileSize,
+      zmin: var_zmin,
+      zmax: var_zmax,
+      scheme: var_scheme,
+      alpha: var_alpha,
+      resample: var_resample,
+    );
+  }
+
+  @protected
+  TaskDto sse_decode_task_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_u_64(deserializer);
+    var var_source = sse_decode_String(deserializer);
+    var var_output = sse_decode_String(deserializer);
+    var var_tileSize = sse_decode_u_32(deserializer);
+    var var_scheme = sse_decode_scheme(deserializer);
+    var var_alpha = sse_decode_alpha_mode(deserializer);
+    var var_resample = sse_decode_resample(deserializer);
+    var var_zmin = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_zmax = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_status = sse_decode_String(deserializer);
+    var var_level = sse_decode_u_32(deserializer);
+    var var_tilesDone = sse_decode_u_64(deserializer);
+    var var_totalTiles = sse_decode_u_64(deserializer);
+    var var_bytesWritten = sse_decode_u_64(deserializer);
+    var var_elapsedMs = sse_decode_u_64(deserializer);
+    var var_error = sse_decode_opt_String(deserializer);
+    return TaskDto(
+      id: var_id,
+      source: var_source,
+      output: var_output,
+      tileSize: var_tileSize,
+      scheme: var_scheme,
+      alpha: var_alpha,
+      resample: var_resample,
+      zmin: var_zmin,
+      zmax: var_zmax,
+      status: var_status,
+      level: var_level,
+      tilesDone: var_tilesDone,
+      totalTiles: var_totalTiles,
+      bytesWritten: var_bytesWritten,
+      elapsedMs: var_elapsedMs,
+      error: var_error,
+    );
+  }
+
+  @protected
+  TaskEvent sse_decode_task_event(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_taskId = sse_decode_u_64(deserializer);
+    var var_kind = sse_decode_task_event_kind(deserializer);
+    return TaskEvent(taskId: var_taskId, kind: var_kind);
+  }
+
+  @protected
+  TaskEventKind sse_decode_task_event_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_status = sse_decode_String(deserializer);
+        return TaskEventKind_StatusChanged(status: var_status);
+      case 1:
+        var var_totalTiles = sse_decode_u_64(deserializer);
+        return TaskEventKind_Started(totalTiles: var_totalTiles);
+      case 2:
+        var var_level = sse_decode_u_32(deserializer);
+        return TaskEventKind_LevelStart(level: var_level);
+      case 3:
+        var var_level = sse_decode_u_32(deserializer);
+        var var_tilesDone = sse_decode_u_64(deserializer);
+        var var_totalTiles = sse_decode_u_64(deserializer);
+        var var_bytesWritten = sse_decode_u_64(deserializer);
+        return TaskEventKind_Progress(
+          level: var_level,
+          tilesDone: var_tilesDone,
+          totalTiles: var_totalTiles,
+          bytesWritten: var_bytesWritten,
+        );
+      case 4:
+        var var_summary = sse_decode_box_autoadd_task_summary(deserializer);
+        return TaskEventKind_Finished(summary: var_summary);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  TaskSummary sse_decode_task_summary(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_tilesDone = sse_decode_u_64(deserializer);
+    var var_totalTiles = sse_decode_u_64(deserializer);
+    var var_bytesWritten = sse_decode_u_64(deserializer);
+    var var_elapsedMs = sse_decode_u_64(deserializer);
+    var var_cancelled = sse_decode_bool(deserializer);
+    var var_error = sse_decode_opt_String(deserializer);
+    return TaskSummary(
+      tilesDone: var_tilesDone,
+      totalTiles: var_totalTiles,
+      bytesWritten: var_bytesWritten,
+      elapsedMs: var_elapsedMs,
+      cancelled: var_cancelled,
+      error: var_error,
+    );
+  }
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint32();
+  }
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getBigUint64();
   }
 
   @protected
@@ -191,21 +1098,141 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  int sse_decode_i_32(SseDeserializer deserializer) {
+  void sse_encode_AnyhowException(
+    AnyhowException self,
+    SseSerializer serializer,
+  ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getInt32();
+    sse_encode_String(self.message, serializer);
   }
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer) {
+  void sse_encode_StreamSink_task_event_Sse(
+    RustStreamSink<TaskEvent> self,
+    SseSerializer serializer,
+  ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint8() != 0;
+    sse_encode_String(
+      self.setupAndSerialize(
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_task_event,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+      ),
+      serializer,
+    );
   }
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
+  }
+
+  @protected
+  void sse_encode_alpha_mode(AlphaMode self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case AlphaMode_Keep():
+        sse_encode_i_32(0, serializer);
+      case AlphaMode_Threshold(below: final below):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_8(below, serializer);
+      case AlphaMode_ColorKey(
+        r: final r,
+        g: final g,
+        b: final b,
+        tolerance: final tolerance,
+      ):
+        sse_encode_i_32(2, serializer);
+        sse_encode_u_8(r, serializer);
+        sse_encode_u_8(g, serializer);
+        sse_encode_u_8(b, serializer);
+        sse_encode_u_8(tolerance, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_task_config(
+    TaskConfig self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_task_config(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_task_summary(
+    TaskSummary self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_task_summary(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self, serializer);
+  }
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putInt32(self);
+  }
+
+  @protected
+  void sse_encode_image_brief(ImageBrief self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.width, serializer);
+    sse_encode_u_32(self.height, serializer);
+    sse_encode_String(self.pixelFormat, serializer);
+    sse_encode_String(self.compression, serializer);
+    sse_encode_String(self.chunkType, serializer);
+    sse_encode_list_prim_u_32_strict(self.chunkHint, serializer);
+    sse_encode_bool(self.hasAlpha, serializer);
+    sse_encode_u_64(self.rgbaBytes, serializer);
+    sse_encode_u_32(self.maxLevel, serializer);
+  }
+
+  @protected
+  void sse_encode_level_estimate(LevelEstimate self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.level, serializer);
+    sse_encode_u_32(self.width, serializer);
+    sse_encode_u_32(self.height, serializer);
+    sse_encode_u_32(self.tilesX, serializer);
+    sse_encode_u_32(self.tilesY, serializer);
+    sse_encode_u_64(self.tiles, serializer);
+  }
+
+  @protected
+  void sse_encode_list_level_estimate(
+    List<LevelEstimate> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_level_estimate(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_prim_u_32_strict(
+    Uint32List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint32List(self);
   }
 
   @protected
@@ -219,6 +1246,144 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_task_dto(List<TaskDto> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_task_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_32(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_resample(Resample self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_scheme(Scheme self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_task_config(TaskConfig self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.source, serializer);
+    sse_encode_String(self.output, serializer);
+    sse_encode_u_32(self.tileSize, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.zmin, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.zmax, serializer);
+    sse_encode_scheme(self.scheme, serializer);
+    sse_encode_alpha_mode(self.alpha, serializer);
+    sse_encode_resample(self.resample, serializer);
+  }
+
+  @protected
+  void sse_encode_task_dto(TaskDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.id, serializer);
+    sse_encode_String(self.source, serializer);
+    sse_encode_String(self.output, serializer);
+    sse_encode_u_32(self.tileSize, serializer);
+    sse_encode_scheme(self.scheme, serializer);
+    sse_encode_alpha_mode(self.alpha, serializer);
+    sse_encode_resample(self.resample, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.zmin, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.zmax, serializer);
+    sse_encode_String(self.status, serializer);
+    sse_encode_u_32(self.level, serializer);
+    sse_encode_u_64(self.tilesDone, serializer);
+    sse_encode_u_64(self.totalTiles, serializer);
+    sse_encode_u_64(self.bytesWritten, serializer);
+    sse_encode_u_64(self.elapsedMs, serializer);
+    sse_encode_opt_String(self.error, serializer);
+  }
+
+  @protected
+  void sse_encode_task_event(TaskEvent self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.taskId, serializer);
+    sse_encode_task_event_kind(self.kind, serializer);
+  }
+
+  @protected
+  void sse_encode_task_event_kind(
+    TaskEventKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case TaskEventKind_StatusChanged(status: final status):
+        sse_encode_i_32(0, serializer);
+        sse_encode_String(status, serializer);
+      case TaskEventKind_Started(totalTiles: final totalTiles):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_64(totalTiles, serializer);
+      case TaskEventKind_LevelStart(level: final level):
+        sse_encode_i_32(2, serializer);
+        sse_encode_u_32(level, serializer);
+      case TaskEventKind_Progress(
+        level: final level,
+        tilesDone: final tilesDone,
+        totalTiles: final totalTiles,
+        bytesWritten: final bytesWritten,
+      ):
+        sse_encode_i_32(3, serializer);
+        sse_encode_u_32(level, serializer);
+        sse_encode_u_64(tilesDone, serializer);
+        sse_encode_u_64(totalTiles, serializer);
+        sse_encode_u_64(bytesWritten, serializer);
+      case TaskEventKind_Finished(summary: final summary):
+        sse_encode_i_32(4, serializer);
+        sse_encode_box_autoadd_task_summary(summary, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_task_summary(TaskSummary self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.tilesDone, serializer);
+    sse_encode_u_64(self.totalTiles, serializer);
+    sse_encode_u_64(self.bytesWritten, serializer);
+    sse_encode_u_64(self.elapsedMs, serializer);
+    sse_encode_bool(self.cancelled, serializer);
+    sse_encode_opt_String(self.error, serializer);
+  }
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint32(self);
+  }
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putBigUint64(self);
+  }
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self);
@@ -227,17 +1392,5 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_unit(void self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-  }
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putInt32(self);
-  }
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint8(self ? 1 : 0);
   }
 }

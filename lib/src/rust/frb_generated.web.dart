@@ -7,9 +7,15 @@
 // ignore_for_file: argument_type_not_assignable
 
 import 'api/simple.dart';
+import 'api/task_api.dart';
+
 import 'dart:async';
 import 'dart:convert';
+
+import 'engine/alpha.dart';
+import 'engine/planner.dart';
 import 'frb_generated.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_web.dart';
 
 abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
@@ -21,10 +27,82 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   });
 
   @protected
+  AnyhowException dco_decode_AnyhowException(dynamic raw);
+
+  @protected
+  RustStreamSink<TaskEvent> dco_decode_StreamSink_task_event_Sse(dynamic raw);
+
+  @protected
   String dco_decode_String(dynamic raw);
 
   @protected
+  AlphaMode dco_decode_alpha_mode(dynamic raw);
+
+  @protected
+  bool dco_decode_bool(dynamic raw);
+
+  @protected
+  TaskConfig dco_decode_box_autoadd_task_config(dynamic raw);
+
+  @protected
+  TaskSummary dco_decode_box_autoadd_task_summary(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  int dco_decode_i_32(dynamic raw);
+
+  @protected
+  ImageBrief dco_decode_image_brief(dynamic raw);
+
+  @protected
+  LevelEstimate dco_decode_level_estimate(dynamic raw);
+
+  @protected
+  List<LevelEstimate> dco_decode_list_level_estimate(dynamic raw);
+
+  @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<TaskDto> dco_decode_list_task_dto(dynamic raw);
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  Resample dco_decode_resample(dynamic raw);
+
+  @protected
+  Scheme dco_decode_scheme(dynamic raw);
+
+  @protected
+  TaskConfig dco_decode_task_config(dynamic raw);
+
+  @protected
+  TaskDto dco_decode_task_dto(dynamic raw);
+
+  @protected
+  TaskEvent dco_decode_task_event(dynamic raw);
+
+  @protected
+  TaskEventKind dco_decode_task_event_kind(dynamic raw);
+
+  @protected
+  TaskSummary dco_decode_task_summary(dynamic raw);
+
+  @protected
+  int dco_decode_u_32(dynamic raw);
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -33,10 +111,86 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
+
+  @protected
+  RustStreamSink<TaskEvent> sse_decode_StreamSink_task_event_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  AlphaMode sse_decode_alpha_mode(SseDeserializer deserializer);
+
+  @protected
+  bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  TaskConfig sse_decode_box_autoadd_task_config(SseDeserializer deserializer);
+
+  @protected
+  TaskSummary sse_decode_box_autoadd_task_summary(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_i_32(SseDeserializer deserializer);
+
+  @protected
+  ImageBrief sse_decode_image_brief(SseDeserializer deserializer);
+
+  @protected
+  LevelEstimate sse_decode_level_estimate(SseDeserializer deserializer);
+
+  @protected
+  List<LevelEstimate> sse_decode_list_level_estimate(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<TaskDto> sse_decode_list_task_dto(SseDeserializer deserializer);
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  Resample sse_decode_resample(SseDeserializer deserializer);
+
+  @protected
+  Scheme sse_decode_scheme(SseDeserializer deserializer);
+
+  @protected
+  TaskConfig sse_decode_task_config(SseDeserializer deserializer);
+
+  @protected
+  TaskDto sse_decode_task_dto(SseDeserializer deserializer);
+
+  @protected
+  TaskEvent sse_decode_task_event(SseDeserializer deserializer);
+
+  @protected
+  TaskEventKind sse_decode_task_event_kind(SseDeserializer deserializer);
+
+  @protected
+  TaskSummary sse_decode_task_summary(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -45,13 +199,61 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
-  int sse_decode_i_32(SseDeserializer deserializer);
+  void sse_encode_AnyhowException(
+    AnyhowException self,
+    SseSerializer serializer,
+  );
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer);
+  void sse_encode_StreamSink_task_event_Sse(
+    RustStreamSink<TaskEvent> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_alpha_mode(AlphaMode self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_task_config(
+    TaskConfig self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_task_summary(
+    TaskSummary self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_image_brief(ImageBrief self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_level_estimate(LevelEstimate self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_level_estimate(
+    List<LevelEstimate> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_u_32_strict(
+    Uint32List self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_prim_u_8_strict(
@@ -60,16 +262,46 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_task_dto(List<TaskDto> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_resample(Resample self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_scheme(Scheme self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_task_config(TaskConfig self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_task_dto(TaskDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_task_event(TaskEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_task_event_kind(TaskEventKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_task_summary(TaskSummary self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer);
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer);
 }
 
 // Section: wire_class

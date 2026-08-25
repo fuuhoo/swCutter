@@ -7,5 +7,12 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-String greet({required String name}) =>
-    RustLib.instance.api.crateApiSimpleGreet(name: name);
+enum Resample { nearest, bilinear }
+
+enum Scheme {
+  /// {out}/{z}/{x}/{y}.png
+  xyz,
+
+  /// {out}/{z}/{x}/{y}.png 且 y 翻转
+  tms,
+}
