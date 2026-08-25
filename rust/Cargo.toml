@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+# rlib 供集成测试链接；cdylib/staticlib 供 Flutter 打包
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 anyhow = "1.0.104"

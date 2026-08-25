@@ -250,6 +250,24 @@ pub fn run_cut(params: &CutParams, sink: Arc<Mutex<dyn FnMut(CutEvent) + Send>>)
             // manifest 写失败不推翻切片结果，仅记录
             summary.errors.push(format!("manifest 写入失败: {e}"));
         }
+        // 生成浏览器预览页（失败仅记录，不影响结果）
+        let pv = writer::PreviewInfo {
+            source_w: src_w,
+            source_h: src_h,
+            tile_size: params.tile_size,
+            zmin: pyramid.min_level_requested,
+            zmax: pyramid.max_level_requested,
+            tms: params.scheme == Scheme::Tms,
+            levels: summary.levels.iter().map(|l| writer::ManifestLevel {
+                level: l.level,
+                width: l.width,
+                height: l.height,
+                tiles: l.tiles,
+            }).collect(),
+        };
+        if let Err(e) = writer::write_preview_html(&params.output, &pv) {
+            summary.errors.push(format!("preview.html 生成失败: {e}"));
+        }
     }
 
     emit(CutEvent::Done(summary.clone()));
@@ -509,6 +527,11 @@ mod tests {
         let xyz01 = std::fs::read(out.join("2").join("0").join("1.png")).unwrap();
         let tms00 = std::fs::read(out_tms.join("2").join("0").join("0.png")).unwrap();
         assert_eq!(xyz01, tms00);
+
+        // 浏览器预览页已生成且包含配置注入
+        let pv = std::fs::read_to_string(out.join("preview.html")).unwrap();
+        assert!(pv.contains("swCutter 预览"));
+        assert!(pv.contains(r#""w":600"#));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

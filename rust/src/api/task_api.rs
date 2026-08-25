@@ -3,7 +3,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::thread;
 use std::time::Duration;
 
 use flutter_rust_bridge::frb;
