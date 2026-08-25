@@ -342,6 +342,8 @@ class _FormColumn extends ConsumerWidget {
 
         _SectionCard(title: '透明处理', icon: Icons.opacity_rounded, children: [
           DropdownButtonFormField<_AlphaChoice>(
+            // 外部（如预览点选取色）改变 alpha 时强制重建以同步选中项
+            key: ValueKey(active.alpha),
             initialValue: _AlphaChoiceX.of(active.alpha),
             items: const [
               DropdownMenuItem(value: _AlphaChoice.keep, child: Text('保留源透明通道')),
@@ -381,6 +383,14 @@ class _FormColumn extends ConsumerWidget {
                 const SizedBox(height: 6),
                 Row(
                   children: [
+                    Container(width: 16, height: 16,
+                      decoration: BoxDecoration(
+                        color: Color.fromARGB(255, r, g, b),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white24),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
                     _NumField(label: 'R', value: r, onChanged: (v) {
                       final a = active.alpha as AlphaMode_ColorKey;
                       active.alpha = AlphaMode.colorKey(r: v, g: a.g, b: a.b, tolerance: a.tolerance);
@@ -406,6 +416,8 @@ class _FormColumn extends ConsumerWidget {
                     }),
                   ],
                 ),
+                Text('可直接在右侧预览图上点击取色，容差 $tolerance',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
               ],
           },
         ]),
@@ -494,15 +506,119 @@ class _SectionCard extends StatelessWidget {
 
 // ---------------- 右侧预览 ----------------
 
-class _PreviewPane extends ConsumerWidget {
+class _PreviewPane extends ConsumerStatefulWidget {
   final TaskDraft draft;
   const _PreviewPane({required this.draft});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_PreviewPane> createState() => _PreviewPaneState();
+}
+
+class _PreviewPaneState extends ConsumerState<_PreviewPane> {
+  Size? _previewSize;          // 预览 PNG 实际像素尺寸
+  Offset? _pickMark;           // 取色标记（预览像素坐标）
+  Color? _pickColor;
+  Timer? _markTimer;
+
+  @override
+  void didUpdateWidget(covariant _PreviewPane old) {
+    super.didUpdateWidget(old);
+    if (old.draft.previewBytes != widget.draft.previewBytes) {
+      _decodePreviewSize();
+      setState(() { _pickMark = null; });
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _decodePreviewSize();
+  }
+
+  Future<void> _decodePreviewSize() async {
+    final bytes = widget.draft.previewBytes;
+    if (bytes == null) return;
+    final img = await decodeImageFromList(bytes);
+    if (!mounted || widget.draft.previewBytes != bytes) return;
+    setState(() => _previewSize = Size(img.width.toDouble(), img.height.toDouble()));
+  }
+
+  @override
+  void dispose() {
+    _markTimer?.cancel();
+    super.dispose();
+  }
+
+  /// 点击取色：映射到源图坐标 → Rust 精确采样 → 写入颜色键。
+  Future<void> _onPick(Offset localPx) async {
+    final size = _previewSize;
+    final draft = widget.draft;
+    if (size == null || size.width < 1 || size.height < 1) return;
+    final sx = (localPx.dx / size.width * draft.width).floor().clamp(0, draft.width - 1);
+    final sy = (localPx.dy / size.height * draft.height).floor().clamp(0, draft.height - 1);
+    try {
+      final px = await rust.samplePixel(source: draft.source, x: sx, y: sy);
+      final r = px[0], g = px[1], b = px[2];
+      final wasColorKey = draft.alpha is AlphaMode_ColorKey;
+      int keepTol = 12;
+      if (wasColorKey) keepTol = (draft.alpha as AlphaMode_ColorKey).tolerance;
+
+      final prevKey = wasColorKey
+          ? Color.fromARGB(255, (draft.alpha as AlphaMode_ColorKey).r,
+              (draft.alpha as AlphaMode_ColorKey).g, (draft.alpha as AlphaMode_ColorKey).b)
+          : null;
+      final newKey = Color.fromARGB(255, r, g, b);
+
+      draft.alpha = AlphaMode.colorKey(r: r, g: g, b: b, tolerance: keepTol);
+      ref.read(draftProvider).touch();
+
+      // 视觉反馈：图像内取色标记 + 十字光标处色点，800ms 淡出
+      setState(() {
+        _pickMark = localPx;
+        _pickColor = newKey;
+      });
+      _markTimer?.cancel();
+      _markTimer = Timer(const Duration(milliseconds: 900), () {
+        if (mounted) setState(() => _pickMark = null);
+      });
+
+      // 打扰最小化：仅模式切换或颜色变化时提示
+      if (!mounted) return;
+      if (!wasColorKey) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('已拾取 #${_hex(r, g, b)} 并启用颜色键透明'),
+          duration: const Duration(seconds: 2),
+        ));
+      } else if (prevKey != newKey) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Row(children: [
+            Container(width: 13, height: 13,
+                decoration: BoxDecoration(color: newKey, shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white24))),
+            const SizedBox(width: 8),
+            Text('透明键更新为 #${_hex(r, g, b)}'),
+          ]),
+          duration: const Duration(milliseconds: 1400),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('取色失败: $e')));
+      }
+    }
+  }
+
+  static String _hex(int r, int g, int b) =>
+      [r, g, b].map((v) => v.toRadixString(16).padLeft(2, '0')).join().toUpperCase();
+
+  @override
+  Widget build(BuildContext context) {
     // 监听草稿变化以刷新预览
     ref.watch(draftProvider);
     final cs = Theme.of(context).colorScheme;
+    final draft = widget.draft;
 
     final totalTiles = draft.estimates?.fold<int>(0, (a, e) => a + e.tiles.toInt()) ?? 0;
 
@@ -516,11 +632,56 @@ class _PreviewPane extends ConsumerWidget {
                 fit: StackFit.expand,
                 children: [
                   if (draft.previewBytes != null)
-                    InteractiveViewer(
-                      maxScale: 8,
-                      child: Center(
-                        child: Image.memory(draft.previewBytes!,
-                            fit: BoxFit.contain, gaplessPlayback: true),
+                    MouseRegion(
+                      cursor: SystemMouseCursors.precise,
+                      child: InteractiveViewer(
+                        maxScale: 12,
+                        child: FittedBox(
+                          fit: BoxFit.contain,
+                          child: SizedBox(
+                            width: _previewSize?.width ?? 1,
+                            height: _previewSize?.height ?? 1,
+                            child: Stack(
+                              children: [
+                                GestureDetector(
+                                  onTapUp: (d) => _onPick(d.localPosition),
+                                  child: Image.memory(draft.previewBytes!,
+                                      fit: BoxFit.fill, gaplessPlayback: true),
+                                ),
+                                if (_pickMark != null && _pickColor != null)
+                                  Positioned(
+                                    left: _pickMark!.dx - 11,
+                                    top: _pickMark!.dy - 11,
+                                    child: IgnorePointer(
+                                      child: TweenAnimationBuilder<double>(
+                                        tween: Tween(begin: 0.4, end: 1),
+                                        duration: const Duration(milliseconds: 120),
+                                        builder: (context, v, _) => Container(
+                                          width: 22, height: 22,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                                color: Colors.white.withValues(alpha: v),
+                                                width: 2),
+                                            color: Colors.black26,
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Container(
+                                            width: 10, height: 10,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: _pickColor!
+                                                  .withValues(alpha: v),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     )
                   else
@@ -540,6 +701,28 @@ class _PreviewPane extends ConsumerWidget {
                     ),
                   if (draft.loadingPreview && draft.previewBytes == null)
                     Container(color: cs.scrim.withValues(alpha: 0.05)),
+                  // 取色操作提示角标
+                  if (draft.previewBytes != null)
+                    Positioned(
+                      right: 10, top: 10,
+                      child: IgnorePointer(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: cs.scrim.withValues(alpha: 0.55),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.colorize_rounded,
+                                size: 12, color: cs.primary),
+                            const SizedBox(width: 5),
+                            Text('点击图像拾取透明色',
+                                style: TextStyle(
+                                    fontSize: 11, color: cs.onSurface.withValues(alpha: 0.85))),
+                          ]),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),

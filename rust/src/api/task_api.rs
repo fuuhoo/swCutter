@@ -243,6 +243,20 @@ pub fn estimate_pyramid(
 }
 
 /// 生成界面内预览缩略图（PNG 字节）。超大图按行带抽稀采样，内存有界。
+/// 采样源图指定坐标的 RGBA 像素值（供预览点选取色）。
+pub fn sample_pixel(source: String, x: i64, y: i64) -> anyhow::Result<Vec<u8>> {
+    let mut reader = SourceReader::open(Path::new(&source))?;
+    let (w, h) = (reader.width as i64, reader.height as i64);
+    if x < 0 || y < 0 || x >= w || y >= h {
+        anyhow::bail!("采样坐标越界 ({x},{y})，图像 {w}×{h}");
+    }
+    let buf = reader.read_rect(x, y, 1, 1)?;
+    if buf.len() < 4 {
+        anyhow::bail!("采样返回数据不足");
+    }
+    Ok(buf)
+}
+
 pub fn make_preview(source: String, max_px: u32) -> anyhow::Result<Vec<u8>> {
     const FALLBACK_PX: u32 = 2048;
     let max_px = max_px.clamp(128, FALLBACK_PX);

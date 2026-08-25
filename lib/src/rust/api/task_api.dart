@@ -35,6 +35,14 @@ Future<List<LevelEstimate>> estimatePyramid({
 );
 
 /// 生成界面内预览缩略图（PNG 字节）。超大图按行带抽稀采样，内存有界。
+/// 采样源图指定坐标的 RGBA 像素值（供预览点选取色）。
+Future<Uint8List> samplePixel({
+  required String source,
+  required PlatformInt64 x,
+  required PlatformInt64 y,
+}) =>
+    RustLib.instance.api.crateApiTaskApiSamplePixel(source: source, x: x, y: y);
+
 Future<Uint8List> makePreview({required String source, required int maxPx}) =>
     RustLib.instance.api.crateApiTaskApiMakePreview(
       source: source,
