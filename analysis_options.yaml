@@ -18,6 +18,9 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # FRB generated bindings and its vendored cargokit build tool
+    - rust_builder/**
+    - lib/src/rust/**
 
 linter:
   # The lint rules applied to this project can be customized in the
