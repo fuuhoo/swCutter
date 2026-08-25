@@ -14,9 +14,12 @@
 | 🗂 排列方式 | `XYZ`（Google/OSM）与 `TMS`（Y 翻转） |
 | 💧 透明处理 | 保留源 Alpha / Alpha 阈值 / 颜色键（白底转透明）三种模式 |
 | ⚡ 多任务并行 | 全局并发数可配；任务内按 CPU 核并行渲染瓦片 |
+| ⏯ 暂停 / 恢复 | 运行中任务可随时暂停（占用槽位保留进度）并一键继续 |
+| 🔁 断点续切 | 输出目录已有同名参数产物时自动跳过已完成瓦片；中断后重跑同一任务即可续切 |
 | 📊 实时进度 | 每任务独立进度条、当前级别、速度、ETA；支持随时取消 |
 | 🌐 浏览器预览 | 完成后生成零依赖 `preview.html`（拖拽平移/滚轮缩放/级别自适应） |
 | 🧾 manifest.json | 记录源信息与全部参数，便于追溯 |
+| 📜 日志 | `%APPDATA%\swCutter\logs\swcutter.log` 记录任务生命周期与错误 |
 
 ## 快速开始
 
@@ -39,7 +42,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Release
 │  └─ src/rust/    FRB 生成的绑定（勿手改）
 ├─ rust/           切片核心 crate
 │  └─ src/engine/  meta / planner / source(分块+LRU) / alpha / cutter / writer
-├─ scripts/        install_flutter.ps1 · build_windows.ps1
+├─ scripts/        install_flutter.ps1 · build_windows.ps1 · make_icon.ps1
 └─ PLAN.md         设计蓝图与验收清单
 ```
 

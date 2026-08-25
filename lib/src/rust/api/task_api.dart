@@ -11,7 +11,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'task_api.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `acquire`, `broadcast`, `default_concurrency`, `manager`, `new`, `release`, `to_dto`, `worker`
+// These functions are ignored because they are not marked as `pub`: `acquire`, `broadcast`, `default_concurrency`, `log`, `manager`, `new`, `release`, `to_dto`, `worker`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Gate`, `Manager`, `SlotGuard`, `Snap`, `TaskEntry`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
@@ -49,6 +49,14 @@ Future<BigInt> startTask({required TaskConfig cfg}) =>
 
 Future<bool> cancelTask({required BigInt id}) =>
     RustLib.instance.api.crateApiTaskApiCancelTask(id: id);
+
+/// 暂停：引擎工作线程在下一块瓦片前停靠。
+Future<bool> pauseTask({required BigInt id}) =>
+    RustLib.instance.api.crateApiTaskApiPauseTask(id: id);
+
+/// 恢复已暂停的任务。
+Future<bool> resumeTask({required BigInt id}) =>
+    RustLib.instance.api.crateApiTaskApiResumeTask(id: id);
 
 Future<bool> removeTask({required BigInt id}) =>
     RustLib.instance.api.crateApiTaskApiRemoveTask(id: id);

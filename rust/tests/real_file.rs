@@ -72,3 +72,46 @@ fn real_file_smoke() {
     assert!(out.join("preview.html").exists());
     // 不清理，便于人工查看输出目录
 }
+
+/// 续切：不清输出目录，直接重跑同一任务 → 应秒级完成（全部跳过）。
+#[test]
+fn real_file_resume() {
+    let path = match std::env::var("SWCUTTER_REAL_FILE") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            eprintln!("skipped: SWCUTTER_REAL_FILE not set");
+            return;
+        }
+    };
+    let out = PathBuf::from(&path).parent().unwrap().join("_smoke_out");
+    if !out.join("manifest.json").exists() {
+        eprintln!("skipped: no prior output (run real_file_smoke first)");
+        return;
+    }
+    let params = CutParams {
+        source: PathBuf::from(&path),
+        output: out.clone(),
+        tile_size: 256,
+        zmin: None,
+        zmax: None,
+        scheme: Scheme::Xyz,
+        alpha: AlphaMode::Keep,
+        resample: Resample::Bilinear,
+    };
+    let sink = Arc::new(Mutex::new(|_: CutEvent| {}));
+    let summary = run_cut(&params, sink);
+    println!(
+        "resume done tiles={} bytes={} ms={} errors={}",
+        summary.total_tiles,
+        summary.bytes_written,
+        summary.elapsed_ms,
+        summary.errors.len()
+    );
+    assert!(summary.errors.is_empty(), "{:?}", summary.errors);
+    // 断点续切命中全部瓦片：应在数秒内完成
+    assert!(
+        summary.elapsed_ms < 30_000,
+        "续切应远快于全量切片，实际 {}ms",
+        summary.elapsed_ms
+    );
+}

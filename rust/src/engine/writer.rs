@@ -27,7 +27,7 @@ pub fn ensure_out_dir(out: &Path) -> std::io::Result<PathBuf> {
     Ok(out.to_path_buf())
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct ManifestLevel {
     pub level: u32,
     pub width: u32,
@@ -35,10 +35,10 @@ pub struct ManifestLevel {
     pub tiles: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct Manifest {
-    pub app: &'static str,
-    pub version: &'static str,
+    pub app: String,
+    pub version: String,
     pub source: String,
     pub source_width: u32,
     pub source_height: u32,

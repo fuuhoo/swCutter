@@ -29,6 +29,8 @@ Color statusColor(BuildContext context, String status) {
   switch (status) {
     case 'running':
       return cs.primary;
+    case 'paused':
+      return const Color(0xFFF5A524);
     case 'done':
       return const Color(0xFF34B37E);
     case 'error':
@@ -42,6 +44,7 @@ Color statusColor(BuildContext context, String status) {
 
 String statusLabel(String status) => switch (status) {
       'running' => '切片中',
+      'paused' => '已暂停',
       'queued' => '排队中',
       'done' => '已完成',
       'error' => '失败',
@@ -60,6 +63,7 @@ class TaskCard extends StatelessWidget {
   final rust.TaskDto task;
   final int? speedBps;
   final VoidCallback onCancel;
+  final VoidCallback onPauseResume;
   final VoidCallback onOpenFolder;
   final VoidCallback onPreview;
   final VoidCallback onRemove;
@@ -69,6 +73,7 @@ class TaskCard extends StatelessWidget {
     required this.task,
     required this.speedBps,
     required this.onCancel,
+    required this.onPauseResume,
     required this.onOpenFolder,
     required this.onPreview,
     required this.onRemove,
@@ -174,12 +179,26 @@ class TaskCard extends StatelessWidget {
             const SizedBox(height: 10),
             Row(
               children: [
-                if (running || t.status == 'queued')
+                if (t.status == 'paused')
+                  FilledButton.tonalIcon(
+                    onPressed: onPauseResume,
+                    icon: const Icon(Icons.play_arrow_rounded, size: 16),
+                    label: const Text('继续'),
+                  )
+                else if (running || t.status == 'queued')
+                  OutlinedButton.icon(
+                    onPressed: onPauseResume,
+                    icon: const Icon(Icons.pause_rounded, size: 16),
+                    label: const Text('暂停'),
+                  ),
+                if (running || t.status == 'queued' || t.status == 'paused') ...[
+                  const SizedBox(width: 8),
                   OutlinedButton.icon(
                     onPressed: onCancel,
                     icon: const Icon(Icons.stop_circle_outlined, size: 16),
                     label: const Text('取消'),
                   ),
+                ],
                 if (finished) ...[
                   FilledButton.tonalIcon(
                     onPressed: onOpenFolder,
@@ -212,6 +231,7 @@ class TaskCard extends StatelessWidget {
 
   IconData _statusIcon(String s) => switch (s) {
         'running' => Icons.autorenew_rounded,
+        'paused' => Icons.pause_circle_outline_rounded,
         'done' => Icons.check_circle_rounded,
         'error' => Icons.error_rounded,
         'cancelled' => Icons.cancel_outlined,

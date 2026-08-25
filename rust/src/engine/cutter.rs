@@ -65,6 +65,34 @@ pub enum CutEvent {
     Done(CutSummary),
 }
 
+/// 任务运行控制句柄：取消 / 暂停。
+#[derive(Debug, Default)]
+pub struct TaskControl {
+    pub cancel: AtomicBool,
+    pub paused: AtomicBool,
+}
+
+impl TaskControl {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+}
+
+/// 兼容入口：内部创建独立控制句柄。
+pub fn run_cut(params: &CutParams, sink: Arc<Mutex<dyn FnMut(CutEvent) + Send>>) -> CutSummary {
+    run_cut_with_control(params, TaskControl::new(), sink)
+}
+
+/// 读取输出目录旧 manifest；若关键参数与本次一致则返回它（用于断点续切）。
+fn read_resumable_manifest(params: &CutParams) -> Option<writer::Manifest> {
+    let raw = std::fs::read_to_string(params.output.join(writer::MANIFEST_NAME)).ok()?;
+    let m: writer::Manifest = serde_json::from_str(&raw).ok()?;
+    let same = m.source == params.source.display().to_string()
+        && m.tile_size == params.tile_size
+        && m.scheme == params.scheme.as_str();
+    if same { Some(m) } else { None }
+}
+
 const ERROR_CAP: usize = 16;
 /// 进度上报间隔
 const TICK: Duration = Duration::from_millis(120);
@@ -76,7 +104,12 @@ struct Job {
 }
 
 /// 执行切片（同步阻塞）。`sink` 会在工作线程上被调用，需自行保证线程安全。
-pub fn run_cut(params: &CutParams, sink: Arc<Mutex<dyn FnMut(CutEvent) + Send>>) -> CutSummary {
+/// 通过 `control` 支持外部取消与暂停。
+pub fn run_cut_with_control(
+    params: &CutParams,
+    control: Arc<TaskControl>,
+    sink: Arc<Mutex<dyn FnMut(CutEvent) + Send>>,
+) -> CutSummary {
     let started = Instant::now();
     let emit = |ev: CutEvent| {
         if let Ok(mut f) = sink.lock() {
@@ -130,11 +163,28 @@ pub fn run_cut(params: &CutParams, sink: Arc<Mutex<dyn FnMut(CutEvent) + Send>>)
     let total = jobs.len() as u64;
     emit(CutEvent::Start { total_tiles: total });
 
+    // ---- 断点续切：旧 manifest 参数一致时，跳过已存在的瓦片 ----
+    let resumable = read_resumable_manifest(params).is_some();
+    let mut skip: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    if resumable {
+        for job in &jobs {
+            let lp = &pyramid.levels[job.plan_idx];
+            let rel =
+                writer::tile_rel_path(params.scheme, lp.level, job.tx, job.ty, lp.tiles_y);
+            let full = params.output.join(&rel);
+            if let Ok(md) = std::fs::metadata(&full) {
+                if md.len() > 0 {
+                    skip.insert(rel);
+                }
+            }
+        }
+    }
+
     // ---- 共享状态 ----
     let done_tiles = Arc::new(AtomicU64::new(0));
     let done_bytes = Arc::new(AtomicU64::new(0));
     let current_level = Arc::new(AtomicU32::new(u32::MAX));
-    let cancelled = Arc::new(AtomicBool::new(false));
+    // 引擎侧取消/暂停统一走控制句柄（ticker 持有同一 Arc，见下方 TickerShared）
     let workers_done = Arc::new(AtomicBool::new(false));
     let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
@@ -144,7 +194,7 @@ pub fn run_cut(params: &CutParams, sink: Arc<Mutex<dyn FnMut(CutEvent) + Send>>)
         done_tiles: Arc::clone(&done_tiles),
         done_bytes: Arc::clone(&done_bytes),
         current_level: Arc::clone(&current_level),
-        cancelled: Arc::clone(&cancelled),
+        control: Arc::clone(&control),
         workers_done: Arc::clone(&workers_done),
         total,
     };
@@ -155,11 +205,26 @@ pub fn run_cut(params: &CutParams, sink: Arc<Mutex<dyn FnMut(CutEvent) + Send>>)
     let py_ref = &pyramid;
 
     jobs.par_iter().for_each(|job| {
-        if cancelled.load(Ordering::Relaxed) {
+        // 暂停停靠（取消可打断）
+        while control.paused.load(Ordering::Relaxed) && !control.cancel.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(120));
+        }
+        if control.cancel.load(Ordering::Relaxed) {
             return;
         }
         let lp = &pyramid.levels[job.plan_idx];
         current_level.fetch_max(lp.level, Ordering::Relaxed);
+
+        // 断点续切命中：直接计入完成
+        let rel = writer::tile_rel_path(p_ref.scheme, lp.level, job.tx, job.ty, lp.tiles_y);
+        if !skip.is_empty() && skip.contains(&rel) {
+            let bytes = std::fs::metadata(params.output.join(&rel))
+                .map(|m| m.len())
+                .unwrap_or(0);
+            done_tiles.fetch_add(1, Ordering::Relaxed);
+            done_bytes.fetch_add(bytes, Ordering::Relaxed);
+            return;
+        }
 
         let result = THREAD_READER.with(|cell| {
             ensure_thread_reader(&src_path)?;
@@ -190,7 +255,7 @@ pub fn run_cut(params: &CutParams, sink: Arc<Mutex<dyn FnMut(CutEvent) + Send>>)
                     ));
                 }
                 drop(errs);
-                cancelled.store(true, Ordering::Relaxed);
+                control.cancel.store(true, Ordering::Relaxed);
             }
         }
     });
@@ -208,7 +273,7 @@ pub fn run_cut(params: &CutParams, sink: Arc<Mutex<dyn FnMut(CutEvent) + Send>>)
         total_tiles: done_tiles.load(Ordering::Relaxed),
         bytes_written: done_bytes.load(Ordering::Relaxed),
         elapsed_ms: started.elapsed().as_millis() as u64,
-        cancelled: cancelled.load(Ordering::Relaxed),
+        cancelled: control.cancel.load(Ordering::Relaxed),
         errors: errs.clone(),
         levels: pyramid
             .levels
@@ -224,8 +289,8 @@ pub fn run_cut(params: &CutParams, sink: Arc<Mutex<dyn FnMut(CutEvent) + Send>>)
 
     if summary.errors.is_empty() && !summary.cancelled {
         let manifest = writer::Manifest {
-            app: "swCutter",
-            version: env!("CARGO_PKG_VERSION"),
+            app: "swCutter".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
             source: params.source.display().to_string(),
             source_width: src_w,
             source_height: src_h,
@@ -302,7 +367,7 @@ struct TickerShared {
     done_tiles: Arc<AtomicU64>,
     done_bytes: Arc<AtomicU64>,
     current_level: Arc<AtomicU32>,
-    cancelled: Arc<AtomicBool>,
+    control: Arc<TaskControl>,
     workers_done: Arc<AtomicBool>,
     total: u64,
 }
@@ -329,7 +394,7 @@ fn ticker_loop(st: TickerShared) {
         if let Ok(mut f) = st.sink.lock() {
             f(CutEvent::Progress(snap));
         }
-        if st.workers_done.load(Ordering::Relaxed) || st.cancelled.load(Ordering::Relaxed) {
+        if st.workers_done.load(Ordering::Relaxed) || st.control.cancel.load(Ordering::Relaxed) {
             break;
         }
     }
@@ -578,6 +643,66 @@ mod tests {
         let idx = (150 * 256 + 128) * 4;
         assert_eq!(t[idx], 0);
         assert_eq!(t[idx + 3], 255);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resume_skips_existing_tiles() {
+        let dir = tmp_dir("resume");
+        let src = dir.join("r.tif");
+        let exp = fixture(&src, 600, 400);
+
+        let params = CutParams {
+            source: src,
+            output: dir.join("out"),
+            tile_size: 256,
+            zmin: None,
+            zmax: None,
+            scheme: Scheme::Xyz,
+            alpha: AlphaMode::Keep,
+            resample: Resample::Nearest,
+        };
+
+        // 首次完整切片
+        let s1 = run_cut(&params, noop_sink());
+        assert!(s1.errors.is_empty(), "{:?}", s1.errors);
+        assert_eq!(s1.total_tiles, 9);
+
+        let l0_tile = params.output.join("0").join("0").join("0.png");
+        let mtime_before = std::fs::metadata(&l0_tile).unwrap().modified().unwrap();
+
+        // 删除 L2 全部瓦片，模拟中断
+        std::fs::remove_dir_all(params.output.join("2")).unwrap();
+
+        // 续切：L0/L1 应被跳过（mtime 不变），L2 重建
+        let s2 = run_cut(&params, noop_sink());
+        assert!(s2.errors.is_empty(), "{:?}", s2.errors);
+        assert_eq!(s2.total_tiles, 9);
+        assert_eq!(s2.levels.len(), 3);
+
+        let mtime_after = std::fs::metadata(&l0_tile).unwrap().modified().unwrap();
+        assert_eq!(
+            mtime_before, mtime_after,
+            "已有瓦片不应被重写"
+        );
+        // L2 瓦片恢复且像素正确
+        let t20 = load_png(&params.output.join("2").join("2").join("0.png"));
+        let si = ((0u32 * 600 + (512 + 87) as u32) * 4) as usize;
+        assert_eq!(&t20[(87) * 4..(87) * 4 + 4], &exp[si..si + 4]);
+
+        // 参数变更 → 不再续切，全部重写
+        let mut p2 = params.clone();
+        p2.scheme = Scheme::Tms;
+        let s3 = run_cut(&p2, noop_sink());
+        assert_eq!(s3.total_tiles, 9);
+        let mtime_tms = std::fs::metadata(
+            p2.output.join("0").join("0").join("0.png"),
+        )
+        .unwrap()
+        .modified()
+        .unwrap();
+        assert_ne!(mtime_before, mtime_tms, "参数变化应全量重切");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

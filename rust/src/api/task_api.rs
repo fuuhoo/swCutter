@@ -8,7 +8,7 @@ use std::time::Duration;
 use flutter_rust_bridge::frb;
 use image::ImageEncoder as _;
 use crate::engine::alpha::AlphaMode;
-use crate::engine::cutter::{self, CutEvent, CutParams};
+use crate::engine::cutter::{self, CutEvent, CutParams, TaskControl};
 use crate::engine::meta;
 use crate::engine::planner::{self, Resample, Scheme};
 use crate::engine::source::SourceReader;
@@ -124,6 +124,7 @@ struct TaskEntry {
     cfg: TaskConfig,
     status: Mutex<String>,
     cancel: AtomicBool,
+    control: Arc<TaskControl>,
     snap: Mutex<Snap>,
     error: Mutex<Option<String>>,
     started_at: Mutex<Option<std::time::Instant>>,
@@ -305,11 +306,19 @@ pub fn start_task(cfg: TaskConfig) -> anyhow::Result<u64> {
         cfg: cfg.clone(),
         status: Mutex::new("queued".into()),
         cancel: AtomicBool::new(false),
+        control: TaskControl::new(),
         snap: Mutex::new(Snap::default()),
         error: Mutex::new(None),
         started_at: Mutex::new(None),
     });
     mgr.tasks.lock().unwrap().push(Arc::clone(&entry));
+    log(
+        "info",
+        &format!(
+            "task#{id} queued source={} output={}",
+            cfg.source, cfg.output
+        ),
+    );
     broadcast(
         mgr,
         TaskEvent {
@@ -328,6 +337,56 @@ pub fn cancel_task(id: u64) -> anyhow::Result<bool> {
     let tasks = mgr.tasks.lock().unwrap();
     if let Some(e) = tasks.iter().find(|t| t.id == id) {
         e.cancel.store(true, Ordering::Relaxed);
+        e.control.cancel.store(true, Ordering::Relaxed);
+        log("info", &format!("task#{id} cancel requested"));
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// 暂停：引擎工作线程在下一块瓦片前停靠。
+pub fn pause_task(id: u64) -> anyhow::Result<bool> {
+    let mgr = manager();
+    let tasks = mgr.tasks.lock().unwrap();
+    if let Some(e) = tasks.iter().find(|t| t.id == id) {
+        if *e.status.lock().unwrap() != "running" {
+            return Ok(false);
+        }
+        e.control.paused.store(true, Ordering::Relaxed);
+        *e.status.lock().unwrap() = "paused".into();
+        log("info", &format!("task#{id} paused"));
+        broadcast(
+            mgr,
+            TaskEvent {
+                task_id: id,
+                kind: TaskEventKind::StatusChanged { status: "paused".into() },
+            },
+        );
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// 恢复已暂停的任务。
+pub fn resume_task(id: u64) -> anyhow::Result<bool> {
+    let mgr = manager();
+    let tasks = mgr.tasks.lock().unwrap();
+    if let Some(e) = tasks.iter().find(|t| t.id == id) {
+        if *e.status.lock().unwrap() != "paused" {
+            return Ok(false);
+        }
+        e.control.paused.store(false, Ordering::Relaxed);
+        *e.status.lock().unwrap() = "running".into();
+        log("info", &format!("task#{id} resumed"));
+        broadcast(
+            mgr,
+            TaskEvent {
+                task_id: id,
+                kind: TaskEventKind::StatusChanged { status: "running".into() },
+            },
+        );
         Ok(true)
     } else {
         Ok(false)
@@ -476,7 +535,23 @@ fn worker(entry: Arc<TaskEntry>) {
         broadcast(manager(), TaskEvent { task_id: entry2.id, kind });
     };
 
-    let summary = cutter::run_cut(&params, Arc::new(Mutex::new(sink_fn)));
+    let summary = cutter::run_cut_with_control(
+        &params,
+        Arc::clone(&entry.control),
+        Arc::new(Mutex::new(sink_fn)),
+    );
+    log(
+        if summary.errors.is_empty() { "info" } else { "error" },
+        &format!(
+            "task#{} finished tiles={} bytes={} ms={} cancelled={} errors={}",
+            entry.id,
+            summary.total_tiles,
+            summary.bytes_written,
+            summary.elapsed_ms,
+            summary.cancelled,
+            summary.errors.len()
+        ),
+    );
 
     let cancelled = summary.cancelled;
     let err = summary.errors.first().cloned();
@@ -520,5 +595,28 @@ struct SlotGuard;
 impl Drop for SlotGuard {
     fn drop(&mut self) {
         manager().gate.release();
+    }
+}
+
+// ---------------- 轻量日志 ----------------
+
+/// 追加一行日志到 %APPDATA%\swCutter\logs\swcutter.log（失败静默）。
+pub(crate) fn log(level: &str, msg: &str) {
+    use std::io::Write as _;
+    let dir = match std::env::var("APPDATA") {
+        Ok(d) => PathBuf::from(d).join("swCutter").join("logs"),
+        Err(_) => return,
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    let line = format!("[{ts}] [{level}] {msg}\n");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("swcutter.log"))
+    {
+        let _ = f.write_all(line.as_bytes());
     }
 }

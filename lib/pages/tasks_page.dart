@@ -17,7 +17,10 @@ class TasksPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(appProvider);
     final tasks = state.tasks.reversed.toList();
-    final running = state.tasks.where((t) => t.status == 'running').length;
+    final running = state
+        .tasks
+        .where((t) => t.status == 'running' || t.status == 'paused')
+        .length;
     final queued = state.tasks.where((t) => t.status == 'queued').length;
 
     return Padding(
@@ -85,6 +88,20 @@ class TasksPage extends ConsumerWidget {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text('取消失败: $e')));
+                        }
+                      }
+                    },
+                    onPauseResume: () async {
+                      try {
+                        if (t.status == 'paused') {
+                          await rust.resumeTask(id: t.id);
+                        } else {
+                          await rust.pauseTask(id: t.id);
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('操作失败: $e')));
                         }
                       }
                     },
