@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data' show Uint8List;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
@@ -10,7 +11,7 @@ import '../state/app_state.dart';
 import '../src/rust/api/task_api.dart' as rust;
 import '../src/rust/engine/alpha.dart';
 import '../src/rust/engine/planner.dart';
-import '../widgets/task_card.dart' show fmtBytes;
+import '../widgets/task_card.dart' show fmtBytes, schemeName;
 
 /// 新建任务：左侧参数表单 + 右侧预览。
 class NewTaskPage extends ConsumerStatefulWidget {
@@ -299,8 +300,9 @@ class _FormColumn extends ConsumerWidget {
           RangeSlider(
             values: RangeValues(active.zmin.toDouble(), active.zmax.toDouble()),
             min: 0,
-            max: active.maxLevel == 0 ? 1 : active.maxLevel.toDouble(),
-            divisions: active.maxLevel == 0 ? 1 : active.maxLevel,
+            // 允许超出原始分辨率最多 +3 级（放大输出）
+            max: (active.maxLevel + 3).toDouble(),
+            divisions: active.maxLevel + 3,
             labels: RangeLabels('Z${active.zmin}', 'Z${active.zmax}'),
             onChanged: (v) {
               active.zmin = v.start.round();
@@ -313,8 +315,15 @@ class _FormColumn extends ConsumerWidget {
             children: [
               Text('Z0（单瓦片全览）',
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-              Text('Z${active.maxLevel}（原始分辨率）',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+              Text(
+                'Z${active.maxLevel} = 原始分辨率'
+                '${active.zmax > active.maxLevel ? ' · 已超采样至 Z${active.zmax}（放大 ${(1 << (active.zmax - active.maxLevel))}×）' : ' · 可再 +3 级'}',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: active.zmax > active.maxLevel
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.grey.shade500),
+              ),
             ],
           ),
         ]),
@@ -516,31 +525,44 @@ class _PreviewPane extends ConsumerStatefulWidget {
 
 class _PreviewPaneState extends ConsumerState<_PreviewPane> {
   Size? _previewSize;          // 预览 PNG 实际像素尺寸
+  Uint8List? _decodedFor;      // 已解码的预览字节（同一 TaskDraft 内可变，需身份比较）
   Offset? _pickMark;           // 取色标记（预览像素坐标）
   Color? _pickColor;
   Timer? _markTimer;
 
-  @override
-  void didUpdateWidget(covariant _PreviewPane old) {
-    super.didUpdateWidget(old);
-    if (old.draft.previewBytes != widget.draft.previewBytes) {
-      _decodePreviewSize();
-      setState(() { _pickMark = null; });
-    }
+  /// 预览未解码前的占位尺寸（与 Rust makePreview 同公式），避免 1×1 不可见。
+  Size _expectedSize(TaskDraft d) {
+    final long = (d.width > d.height ? d.width : d.height).clamp(1, 1 << 30);
+    final scale = (long / 2048).ceil().clamp(1, 1 << 20);
+    return Size((d.width / scale).ceilToDouble(),
+        (d.height / scale).ceilToDouble());
+  }
+
+  void _scheduleDecode() {
+    final bytes = widget.draft.previewBytes;
+    if (bytes == null || identical(_decodedFor, bytes)) return;
+    _decodedFor = bytes;
+    decodeImageFromList(bytes).then((img) {
+      if (!mounted || !identical(_decodedFor, bytes)) return;
+      setState(() => _previewSize =
+          Size(img.width.toDouble(), img.height.toDouble()));
+    });
   }
 
   @override
   void initState() {
     super.initState();
-    _decodePreviewSize();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleDecode());
   }
 
-  Future<void> _decodePreviewSize() async {
-    final bytes = widget.draft.previewBytes;
-    if (bytes == null) return;
-    final img = await decodeImageFromList(bytes);
-    if (!mounted || widget.draft.previewBytes != bytes) return;
-    setState(() => _previewSize = Size(img.width.toDouble(), img.height.toDouble()));
+  @override
+  void didUpdateWidget(covariant _PreviewPane old) {
+    super.didUpdateWidget(old);
+    if (!identical(old.draft.previewBytes, widget.draft.previewBytes)) {
+      _previewSize = null;
+      _pickMark = null;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleDecode());
   }
 
   @override
@@ -639,11 +661,12 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
                         child: FittedBox(
                           fit: BoxFit.contain,
                           child: SizedBox(
-                            width: _previewSize?.width ?? 1,
-                            height: _previewSize?.height ?? 1,
+                            width: (_previewSize ?? _expectedSize(draft)).width,
+                            height: (_previewSize ?? _expectedSize(draft)).height,
                             child: Stack(
                               children: [
                                 GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
                                   onTapUp: (d) => _onPick(d.localPosition),
                                   child: Image.memory(draft.previewBytes!,
                                       fit: BoxFit.fill, gaplessPlayback: true),
@@ -701,25 +724,46 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
                     ),
                   if (draft.loadingPreview && draft.previewBytes == null)
                     Container(color: cs.scrim.withValues(alpha: 0.05)),
-                  // 取色操作提示角标
+                  // 右上角：层级/排列信息 + 取色提示角标
                   if (draft.previewBytes != null)
                     Positioned(
                       right: 10, top: 10,
                       child: IgnorePointer(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: cs.scrim.withValues(alpha: 0.55),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(mainAxisSize: MainAxisSize.min, children: [
-                            Icon(Icons.colorize_rounded,
-                                size: 12, color: cs.primary),
-                            const SizedBox(width: 5),
-                            Text('点击图像拾取透明色',
-                                style: TextStyle(
-                                    fontSize: 11, color: cs.onSurface.withValues(alpha: 0.85))),
-                          ]),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: cs.scrim.withValues(alpha: 0.55),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(Icons.layers_rounded, size: 12, color: cs.primary),
+                                const SizedBox(width: 5),
+                                Text('Z${draft.zmin}–Z${draft.zmax} · ${schemeName(draft.scheme)}',
+                                    style: TextStyle(
+                                        fontSize: 11, fontWeight: FontWeight.w600,
+                                        color: cs.onSurface.withValues(alpha: 0.9))),
+                              ]),
+                            ),
+                            const SizedBox(height: 5),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: cs.scrim.withValues(alpha: 0.55),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(Icons.colorize_rounded,
+                                    size: 12, color: cs.primary),
+                                const SizedBox(width: 5),
+                                Text('点击图像拾取透明色',
+                                    style: TextStyle(
+                                        fontSize: 11, color: cs.onSurface.withValues(alpha: 0.85))),
+                              ]),
+                            ),
+                          ],
                         ),
                       ),
                     ),

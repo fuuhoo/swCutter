@@ -17,9 +17,12 @@ pub struct LevelPlan {
     /// 该级瓦片网格
     pub tiles_x: u32,
     pub tiles_y: u32,
-    /// 相对原始分辨率的降采样倍数（2^n）
-    pub downscale: u32,
+    /// 源像素 / 输出像素（>1 缩小，<1 放大）
+    pub scale: f64,
 }
+
+/// 允许超过原始分辨率的最大上采样级数
+pub const MAX_UPSAMPLE: u32 = 4;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PyramidPlan {
@@ -63,10 +66,18 @@ pub fn native_level(width: u32, height: u32, tile_size: u32) -> u32 {
     ratio.log2().ceil().max(0.0) as u32
 }
 
-/// 计算某级别的显示尺寸与瓦片数。
+/// 计算某级别的显示尺寸与瓦片数。level > max_level 时按 2^n 上采样。
 pub fn level_dims(width: u32, height: u32, level: u32, max_level: u32) -> (u32, u32) {
-    let ds = 1u32 << (max_level - level).min(31);
-    ((width + ds - 1) / ds, (height + ds - 1) / ds)
+    if level <= max_level {
+        let ds = 1u32 << (max_level - level).min(31);
+        ((width + ds - 1) / ds, (height + ds - 1) / ds)
+    } else {
+        let up = 1u32 << (level - max_level).min(24);
+        (
+            (width as u64 * up as u64).min(u32::MAX as u64) as u32,
+            (height as u64 * up as u64).min(u32::MAX as u64) as u32,
+        )
+    }
 }
 
 pub fn plan(
@@ -86,7 +97,8 @@ pub fn plan(
     }
 
     let max_level = native_level(image_width, image_height, tile_size);
-    // 先校验请求区间，再钳制到 [0, max_level]
+    // 先校验请求区间；zmax 允许超出 native 至多 MAX_UPSAMPLE 级（放大输出）
+    let hard_cap = max_level.saturating_add(MAX_UPSAMPLE);
     let req_min = min_level_req.unwrap_or(0);
     let req_max = max_level_req.unwrap_or(max_level);
     if req_min > req_max {
@@ -94,8 +106,8 @@ pub fn plan(
             "级别区间无效: [{req_min}, {req_max}]"
         )));
     }
-    let zmin = req_min.min(max_level);
-    let zmax = req_max.min(max_level);
+    let zmin = req_min.min(hard_cap);
+    let zmax = req_max.clamp(zmin, hard_cap);
 
     let mut levels = Vec::new();
     let mut total: u64 = 0;
@@ -104,13 +116,18 @@ pub fn plan(
         let tx = (w + tile_size - 1) / tile_size;
         let ty = (h + tile_size - 1) / tile_size;
         total += tx as u64 * ty as u64;
+        let scale = if level <= max_level {
+            (1u32 << (max_level - level)) as f64
+        } else {
+            1.0 / (1u32 << (level - max_level)) as f64
+        };
         levels.push(LevelPlan {
             level,
             width: w,
             height: h,
             tiles_x: tx,
             tiles_y: ty,
-            downscale: 1u32 << (max_level - level),
+            scale,
         });
     }
 
@@ -162,9 +179,24 @@ mod tests {
             plan(100, 100, 256, Some(3), Some(1)),
             Err(CoreError::InvalidInput(_))
         ));
-        // clamp beyond native
+        // clamp beyond native+MAX_UPSAMPLE
         let p = plan(512, 512, 256, Some(0), Some(99)).unwrap();
-        assert_eq!(p.max_level_requested, 1);
+        assert_eq!(p.max_level_requested, 1 + MAX_UPSAMPLE);
+    }
+
+    #[test]
+    fn upsample_levels_beyond_native() {
+        // native(512,256)=1；请求到 L3 = 原始分辨率 ×2
+        let p = plan(512, 256, 256, Some(0), Some(3)).unwrap();
+        assert_eq!(p.levels.len(), 4);
+        let l2 = &p.levels[2];
+        assert_eq!((l2.width, l2.height), (1024, 512));
+        assert!((l2.scale - 0.5).abs() < 1e-9);
+        assert_eq!(l2.tiles_x, 4);
+        // L1 = native，scale=1
+        let l1 = &p.levels[1];
+        assert_eq!((l1.width, l1.height), (512, 256));
+        assert!((l1.scale - 1.0).abs() < 1e-9);
     }
 
     #[test]

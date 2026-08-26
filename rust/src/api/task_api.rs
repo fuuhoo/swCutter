@@ -258,29 +258,10 @@ pub fn sample_pixel(source: String, x: i64, y: i64) -> anyhow::Result<Vec<u8>> {
 }
 
 pub fn make_preview(source: String, max_px: u32) -> anyhow::Result<Vec<u8>> {
-    const FALLBACK_PX: u32 = 2048;
-    let max_px = max_px.clamp(128, FALLBACK_PX);
     let mut reader = SourceReader::open(Path::new(&source))?;
+    let (ow, oh, canvas) = reader.preview_sample(max_px)?;
     let (w, h) = (reader.width, reader.height);
-
-    let scale_f = (w.max(h) as f64 / max_px as f64).ceil();
-    let scale = if scale_f < 1.0 { 1 } else { scale_f as u32 };
-    let ow = ((w + scale - 1) / scale).min(FALLBACK_PX);
-    let oh = ((h + scale - 1) / scale).min(FALLBACK_PX);
-
-    let mut canvas = vec![0u8; ow as usize * oh as usize * 4];
-    for oy in 0..oh {
-        let sy = (((oy as u64) * (h as u64)) / oh as u64).min(h as u64 - 1) as i64;
-        let row = reader.read_rect(0, sy, w, 1)?;
-        for ox in 0..ow {
-            let sxp = (((ox as u64) * (w as u64)) / ow as u64) as usize;
-            let di = (oy as usize * ow as usize + ox as usize) * 4;
-            let si = sxp * 4;
-            if si + 3 < row.len() {
-                canvas[di..di + 4].copy_from_slice(&row[si..si + 4]);
-            }
-        }
-    }
+    let _ = (w, h);
 
     // 轻度平滑后编码为 PNG
     let img =

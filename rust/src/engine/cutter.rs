@@ -418,16 +418,16 @@ fn render_tile(
         return Err(CoreError::InvalidInput("空瓦片".into()));
     }
 
-    let s = lp.downscale.max(1);
-    let sx = (tx * t) as i64 * s as i64;
-    let sy = (ty * t) as i64 * s as i64;
+    let sf = lp.scale; // 源px/输出px，可 <1（放大级别）
+    let sx = (tx as f64 * t as f64 * sf).round() as i64;
+    let sy = (ty as f64 * t as f64 * sf).round() as i64;
 
     // 源侧区域：不超过图像边界（避免边缘瓦片混入黑边）
-    let sw = ((out_w as i64 * s as i64).min(src_w as i64 - sx)).max(1);
-    let sh = ((out_h as i64 * s as i64).min(src_h as i64 - sy)).max(1);
+    let sw = (((out_w as f64 * sf).ceil() as i64).min(src_w as i64 - sx)).max(1);
+    let sh = (((out_h as f64 * sf).ceil() as i64).min(src_h as i64 - sy)).max(1);
 
     // 为重采样补一圈采样余量（越界部分由 read_rect 填充，随后裁掉）
-    let pad: i64 = if s > 1 { s as i64 } else { 1 };
+    let pad: i64 = if sf > 1.0 { sf.ceil() as i64 } else { 1 };
     let rx = sx - pad;
     let ry = sy - pad;
     let rw = (sw + pad * 2) as u32;
@@ -443,8 +443,8 @@ fn render_tile(
     let cropped =
         image::imageops::crop_imm(&full, cx, cy, sw as u32, sh as u32).to_image();
 
-    // 重采样到目标尺寸
-    let out_img = if s == 1 {
+    // 重采样到目标尺寸（含放大级别）
+    let out_img = if (sf - 1.0).abs() < f64::EPSILON && cropped.width() == out_w && cropped.height() == out_h {
         cropped
     } else {
         let filter = match params.resample {

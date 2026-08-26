@@ -115,3 +115,21 @@ fn real_file_resume() {
         summary.elapsed_ms
     );
 }
+
+/// 预览生成性能：大文件应在数秒内完成（单遍 chunk 采样）。
+#[test]
+fn real_file_preview_perf() {
+    let path = match std::env::var("SWCUTTER_REAL_FILE") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            eprintln!("skipped: SWCUTTER_REAL_FILE not set");
+            return;
+        }
+    };
+    let t0 = std::time::Instant::now();
+    let png = rust_lib_sw_cutter::api::task_api::make_preview(path.clone(), 1600).unwrap();
+    let ms = t0.elapsed().as_millis();
+    println!("preview {} bytes in {} ms", png.len(), ms);
+    assert!(png.len() > 10_000);
+    assert!(ms < 15_000, "预览应秒级完成，实际 {ms}ms");
+}

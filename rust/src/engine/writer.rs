@@ -106,13 +106,42 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
  #map{position:absolute;inset:46px 0 0 0;cursor:grab}
  #map.drag{cursor:grabbing}
  img.tile{position:absolute;image-rendering:auto;-webkit-user-drag:none;user-select:none}
+ img.ov{position:absolute;pointer-events:none;-webkit-user-drag:none}
  #hint{position:absolute;right:12px;bottom:10px;font-size:11px;color:#7a8699}
+ #panel{position:absolute;top:50px;right:10px;width:min(430px,92vw);max-height:70vh;overflow:auto;
+        background:#171c26f2;border:1px solid #ffffff20;border-radius:12px;padding:12px;z-index:50;
+        display:flex;flex-direction:column;gap:8px;font-size:12.5px}
+ #panel[hidden]{display:none}
+ .prow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+ .phint{color:#7a8699;font-size:11px;line-height:1.5}
+ #panel input[type=text],#panel input:not([type]),#panel input[type=number]{
+   background:#0f1219;border:1px solid #ffffff22;color:#dfe5ef;border-radius:7px;padding:5px 8px;font-size:12px}
+ .chk{display:flex;align-items:center;gap:3px;color:#9fb0cc}
+ .ovItem{border:1px solid #ffffff14;border-radius:9px;padding:7px 9px;display:flex;flex-direction:column;gap:5px;background:#10141d}
+ .ovItem .row{display:flex;gap:7px;align-items:center}
+ .ovItem input[type=range]{flex:1;accent-color:#4f8cff}
+ .tag{font-size:10.5px;color:#7a8699}
 </style></head>
 <body>
 <div id="bar">
  <b>🧩 swCutter 预览</b><span id="meta"></span><span class="sp"></span>
  <button id="out">−</button><span id="zoom"></span><button id="in">＋</button>
  <button id="fit">适应窗口</button><button id="one">1:1</button>
+ <span id="badge"></span>
+ <button id="layersBtn">图层</button>
+</div>
+<div id="panel" hidden>
+ <div class="prow"><b>在线图层对照</b><span style="flex:1"></span><button id="addPresetTdt">天地图·矢量</button><button id="addPresetImg">天地图·影像</button><button id="addPresetOsm">OSM</button></div>
+ <div class="phint">叠加层与本地金字塔同层级同编号对齐，用于核对切片网格/排列；天地图需填 tk 密钥。</div>
+ <div class="prow"><input id="tkInput" placeholder="天地图 tk 密钥（保存到本机）"><button id="saveTk">保存密钥</button></div>
+ <div id="ovList"></div>
+ <div class="prow">
+   <input id="ovName" placeholder="名称" style="width:90px">
+   <input id="ovTpl" placeholder="URL 模板，含 {z} {x} {y} 可选 {s}" style="flex:1">
+   <label class="chk"><input type="checkbox" id="ovTms"> TMS</label>
+   <input id="ovSubs" placeholder="子域如 012" style="width:64px">
+   <button id="ovAdd">添加</button>
+ </div>
 </div>
 <div id="map"></div>
 <div id="hint">拖动平移 · 滚轮缩放 · 双击放大</div>
@@ -121,7 +150,10 @@ const CFG = __CFG__;
 const map = document.getElementById('map');
 const zoomLabel = document.getElementById('zoom');
 document.getElementById('meta').textContent =
-  ` ${CFG.w}×${CFG.h}px · 级别 ${CFG.zmin}–${CFG.zmax} · 瓦片 ${CFG.t}px`;
+  ` ${CFG.w}×${CFG.h}px · 瓦片 ${CFG.t}px`;
+// 右上角信息徽章：层级范围 + 排列方式
+document.getElementById('badge').textContent = `Z${CFG.zmin}–Z${CFG.zmax} · ${CFG.tms?'TMS':'XYZ'}`;
+document.getElementById('badge').style.cssText='font-size:12px;font-weight:700;color:#8fb4ff;background:#4f8cff22;border:1px solid #4f8cff44;border-radius:999px;padding:4px 10px';
 
 // 视图状态：源像素坐标 (cx,cy) 为视口中心，scale = 屏幕 px / 源 px
 let scale = 1, cx = CFG.w/2, cy = CFG.h/2;
@@ -142,6 +174,7 @@ function apply(){
   // 该级别像素→屏幕
   const k = scale * Math.pow(2, CFG.zmax - L.z);
   const ts = CFG.t * k;
+  tsGuard = ts;
   if(ts < 4){ zoomLabel.textContent = `${(scale*100)|0}%`; return; }
   const left = cx - vw/2/scale, top = cy - vh/2/scale;   // 源坐标视口左上
   const lx0 = Math.max(0, Math.floor(left / CFG.t)), ly0 = Math.max(0, Math.floor(top / CFG.t));
@@ -160,6 +193,7 @@ function apply(){
       map.appendChild(img); imgs.push(img);
     }
   }
+  drawOverlays(L, left, top, vw, vh, k);
   zoomLabel.textContent = `${Math.round(scale*100)}% · L${L.z}`;
 }
 function clampCenter(){
@@ -195,6 +229,98 @@ document.getElementById('fit').onclick=fit;
 document.getElementById('one').onclick=one;
 addEventListener('resize',apply);
 fit();
+
+/* ---------------- 在线叠加图层 ---------------- */
+const LS_KEY='swcutter_overlays', LS_TK='swcutter_tk';
+let overlays = [];
+try{ overlays = JSON.parse(localStorage.getItem(LS_KEY)||'[]'); }catch(e){ overlays=[]; }
+const tkInput=document.getElementById('tkInput');
+tkInput.value = localStorage.getItem(LS_TK)||'';
+document.getElementById('saveTk').onclick=()=>{ localStorage.setItem(LS_TK, tkInput.value.trim()); renderOvList(); };
+document.getElementById('layersBtn').onclick=()=>{ const p=document.getElementById('panel'); p.hidden=!p.hidden; };
+
+function saveOverlays(){ localStorage.setItem(LS_KEY, JSON.stringify(overlays)); renderOvList(); apply(); }
+const TDT = t=>`https://t{s}.tianditu.gov.cn/DataServer?T=${t}&x={x}&y={y}&l={z}&tk={tk}`;
+const PRESETS={
+  tdtVec:{name:'天地图·矢量', tpl:TDT('vec_w'), subs:'01234567', tms:false},
+  tdtImg:{name:'天地图·影像', tpl:TDT('img_w'), subs:'01234567', tms:false},
+  osm:{name:'OpenStreetMap', tpl:'https://tile.openstreetmap.org/{z}/{x}/{y}.png', subs:'', tms:false},
+};
+document.getElementById('addPresetTdt').onclick=()=>addPreset('tdtVec');
+document.getElementById('addPresetImg').onclick=()=>addPreset('tdtImg');
+document.getElementById('addPresetOsm').onclick=()=>addPreset('osm');
+function addPreset(k){
+  if(overlays.some(o=>o.name===PRESETS[k].name)) return;
+  overlays.push({...PRESETS[k], opacity:0.55, on:true, zmin:2, zmax:18});
+  saveOverlays();
+}
+document.getElementById('ovAdd').onclick=()=>{
+  const name=document.getElementById('ovName').value.trim()||'自定义';
+  const tpl=document.getElementById('ovTpl').value.trim();
+  if(!tpl.includes('{x}')||!tpl.includes('{y}')){ alert('模板需包含 {x} 与 {y}'); return; }
+  overlays.push({name,tpl,subs:document.getElementById('ovSubs').value.trim(),
+                 tms:document.getElementById('ovTms').checked,opacity:0.55,on:true,zmin:0,zmax:22});
+  document.getElementById('ovName').value=''; document.getElementById('ovTpl').value='';
+  saveOverlays();
+};
+function renderOvList(){
+  const list=document.getElementById('ovList'); list.innerHTML='';
+  overlays.forEach((o,i)=>{
+    const div=document.createElement('div'); div.className='ovItem';
+    div.innerHTML=`<div class="row">
+      <label class="chk"><input type="checkbox" ${o.on?'checked':''} data-i="${i}" data-act="on"> ${o.name}</label>
+      <span style="flex:1"></span>
+      <span class="tag">${o.tms?'TMS':'XYZ'}${o.subs?` · s=${o.subs}`:''}</span>
+      <button data-i="${i}" data-act="del">删除</button></div>
+      <div class="row"><span class="tag">透明度</span>
+      <input type="range" min="10" max="100" value="${Math.round(o.opacity*100)}" data-i="${i}" data-act="op">
+      <button data-i="${i}" data-act="up">${o.on?'隐藏':'显示'}</button></div>`;
+    list.appendChild(div);
+  });
+  list.querySelectorAll('input[type=checkbox]').forEach(el=>el.onchange=e=>{overlays[+e.target.dataset.i].on=e.target.checked;saveOverlays();});
+  list.querySelectorAll('input[type=range]').forEach(el=>el.oninput=e=>{overlays[+e.target.dataset.i].opacity=+e.target.value/100;applySoft();});
+  list.querySelectorAll('button[data-act=del]').forEach(el=>el.onclick=e=>{overlays.splice(+e.target.dataset.i,1);saveOverlays();});
+  list.querySelectorAll('button[data-act=up]').forEach(el=>el.onclick=e=>{const o=overlays[+e.target.dataset.i];o.on=!o.on;saveOverlays();});
+}
+// 仅更新透明度不重取瓦片
+function applySoft(){ const k=scale*Math.pow(2,CFG.zmax-curL.z);
+  for(const el of ovImgs){ const o=overlays[el._ovi]; if(o) el.style.opacity=o.opacity; } }
+
+let curL=null;
+let tsGuard=0;
+let ovImgs=[];
+function drawOverlays(L,left,top,vw,vh,k){
+  for(const el of ovImgs) el.remove(); ovImgs.length=0;
+  curL=L;
+  if(tsGuard<4) return;
+  const lx1e=Math.min(L.tx, Math.floor((left+vw/scale)/CFG.t)+1);
+  const ly1e=Math.min(L.ty, Math.floor((top+vh/scale)/CFG.t)+1);
+  const lx0=Math.max(0, Math.floor(left/CFG.t)), ly0=Math.max(0, Math.floor(top/CFG.t));
+  overlays.forEach((o,oi)=>{
+    if(!o.on) return;
+    let tpl=o.tpl.replace('{tk}', localStorage.getItem(LS_TK)||'');
+    if(tpl.includes('{tk}')&&!localStorage.getItem(LS_TK)) return; // 无密钥不请求
+    const oz=Math.max(o.zmin??0, Math.min(o.zmax??22, L.z));
+    const flip=o.tms? (Math.pow(2,oz)-1):null;
+    for(let ty=ly0; ty<ly1e; ty++){
+      for(let tx=lx0; tx<lx1e; tx++){
+        const oy=flip!=null? flip-ty : ty;
+        let url=tpl.replace('{z}',oz).replace('{x}',tx).replace('{y}',oy);
+        if(o.subs&&o.subs.length){ url=url.replace('{s}', o.subs[(tx+ty)%o.subs.length]); }
+        const img=new Image();
+        img.className='ov';
+        img.style.left=(tx*CFG.t-left)*scale+'px';
+        img.style.top=(ty*CFG.t-top)*scale+'px';
+        img.style.width=(CFG.t*k+1)+'px'; img.style.height=(CFG.t*k+1)+'px';
+        img.style.opacity=o.opacity;
+        img.onerror=()=>img.remove();
+        img.src=url;
+        map.appendChild(img); ovImgs.push(img); img._ovi=oi;
+      }
+    }
+  });
+}
+renderOvList();
 </script></body></html>"#;
 
     let html = html.replace("__CFG__", &cfg_str);

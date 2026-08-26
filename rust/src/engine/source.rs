@@ -137,6 +137,60 @@ impl SourceReader {
         Ok(())
     }
 
+    /// 单遍采样生成预览：每个 chunk 仅解码一次，把采样网格点拷入画布。
+    /// 返回 (ow, oh, rgba8)。对任意条带/瓦片布局都是 O(文件大小) 单遍。
+    pub fn preview_sample(&mut self, max_px: u32) -> CoreResult<(u32, u32, Vec<u8>)> {
+        let max_px = max_px.clamp(128, 2048);
+        let (w, h) = (self.width, self.height);
+        let scale = ((w.max(h) as f64 / max_px as f64).ceil() as u32).max(1);
+        let ow = w.div_ceil(scale);
+        let oh = h.div_ceil(scale);
+        let mut canvas = vec![0u8; ow as usize * oh as usize * 4];
+
+        for ci in 0..self.chunk_count {
+            let (cox, coy) = match self.chunk_type {
+                ChunkType::Strip => (0u32, ci * self.chunk_h),
+                ChunkType::Tile => (
+                    (ci % self.chunks_across) * self.chunk_w,
+                    (ci / self.chunks_across) * self.chunk_h,
+                ),
+            };
+            if cox >= w || coy >= h || ci >= self.chunk_count {
+                continue;
+            }
+            // 跳过不含采样点的块
+            let ox0 = cox.div_ceil(scale);
+            let oy0 = coy.div_ceil(scale);
+            if ox0 >= ow || oy0 >= oh {
+                continue;
+            }
+            self.ensure_chunk(ci)?;
+            let (dw, dh) = self.dims[&ci];
+            let cw_eff = dw.min(w - cox).max(1);
+            let ch_eff = dh.min(h - coy).max(1);
+
+            let ox1 = (((cox + cw_eff - 1) / scale) + 1).min(ow) ; // exclusive
+            let oy1 = (((coy + ch_eff - 1) / scale) + 1).min(oh);
+
+            let canvas_c = self.cache.get(&ci).expect("just ensured");
+            for oy in oy0..oy1 {
+                let sy = oy * scale;
+                if sy < coy || sy >= coy + ch_eff { continue; }
+                let lrow = (sy - coy) as usize;
+                for ox in ox0..ox1 {
+                    let sx = ox * scale;
+                    if sx < cox || sx >= cox + cw_eff { continue; }
+                    let si = (lrow * cw_eff as usize + (sx - cox) as usize) * 4;
+                    let di = (oy as usize * ow as usize + ox as usize) * 4;
+                    if si + 3 < canvas_c.rgba.len() && di + 3 < canvas.len() {
+                        canvas[di..di + 4].copy_from_slice(&canvas_c.rgba[si..si + 4]);
+                    }
+                }
+            }
+        }
+        Ok((ow, oh, canvas))
+    }
+
     /// 读取源矩形区域为 RGBA8 行主序缓冲（越界区域填 0）。
     pub fn read_rect(&mut self, rx: i64, ry: i64, rw: u32, rh: u32) -> CoreResult<Vec<u8>> {
         if rw == 0 || rh == 0 {
