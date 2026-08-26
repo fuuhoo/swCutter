@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/app_state.dart';
+import '../src/rust/engine/planner.dart';
 import '../version.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -178,6 +179,24 @@ class SettingsPage extends ConsumerWidget {
                     ref.read(appProvider).skipEmpty = v;
                     ref.read(appProvider).saveSettings();
                   },
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Text('重采样', style: TextStyle(fontSize: 13)),
+                    const Spacer(),
+                    SegmentedButton<Resample>(
+                      segments: const [
+                        ButtonSegment(value: Resample.nearest, label: Text('最近邻')),
+                        ButtonSegment(value: Resample.bilinear, label: Text('双线性')),
+                      ],
+                      selected: {app.resample},
+                      onSelectionChanged: (s) {
+                        ref.read(appProvider).resample = s.first;
+                        ref.read(appProvider).saveSettings();
+                      },
+                    ),
+                  ],
                 ),
               ],
             ),

@@ -305,6 +305,55 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// 进程级全图光栅缓存：巨型条带源只解码一次，预览/切片共用。
+static FULL_CACHE: std::sync::OnceLock<std::sync::Mutex<Vec<(PathBuf, std::sync::Arc<Vec<u8>>)>>> =
+    std::sync::OnceLock::new();
+
+fn full_cache() -> &'static std::sync::Mutex<Vec<(PathBuf, std::sync::Arc<Vec<u8>>)>> {
+    FULL_CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+/// 巨型条带源 → 返回共享全图（必要时首次解码并入缓存）；其余返回 None。
+pub fn full_raster_if_giant(path: &Path) -> CoreResult<Option<std::sync::Arc<Vec<u8>>>> {
+    let key = path.to_path_buf();
+    if let Some(m) = full_cache().lock().unwrap().iter().find(|(p, _)| *p == key) {
+        return Ok(Some(std::sync::Arc::clone(&m.1)));
+    }
+    let mut r = SourceReader::open(path)?;
+    let gb = r.giant_strip_bytes();
+    let total = r.width as u64 * r.height as u64 * 4;
+    if gb <= 32 * 1024 * 1024 || total > 3 * 1024 * 1024 * 1024 {
+        return Ok(None);
+    }
+    let buf = std::sync::Arc::new(r.read_full()?);
+    let arc = std::sync::Arc::clone(&buf);
+    full_cache().lock().unwrap().push((key, buf));
+    Ok(Some(arc))
+}
+
+/// 从共享全图直接采样预览网格。
+fn sample_from_full(
+    full: &[u8],
+    w: u32,
+    scale: u32,
+    ow: u32,
+    oh: u32,
+) -> Vec<u8> {
+    let mut canvas = vec![0u8; ow as usize * oh as usize * 4];
+    for oy in 0..oh {
+        let sy = (oy * scale) as usize;
+        for ox in 0..ow {
+            let sx = (ox * scale) as usize;
+            let si = (sy * w as usize + sx) * 4;
+            let di = (oy as usize * ow as usize + ox as usize) * 4;
+            if si + 3 < full.len() && di + 3 < canvas.len() {
+                canvas[di..di + 4].copy_from_slice(&full[si..si + 4]);
+            }
+        }
+    }
+    canvas
+}
+
 /// 并行预览采样：多线程各持独立解码器，只解码含采样点的块。
 /// 墙钟时间约等于「解码总量 / 核数」，对标系统看图工具的多核解码。
 pub fn preview_sample_parallel(path: &Path, max_px: u32) -> CoreResult<(u32, u32, Vec<u8>)> {
@@ -322,6 +371,13 @@ pub fn preview_sample_parallel(path: &Path, max_px: u32) -> CoreResult<(u32, u32
     };
     let ((ow, oh, scale), needed) = probe.preview_plan(max_px);
     drop(probe);
+
+    // 巨型条带快速路径：共享全图直接取样（首次调用完成唯一一次全图解码）
+    if let Some(full) = full_raster_if_giant(path)? {
+        let canvas = sample_from_full(&full, geo.w, scale, ow, oh);
+        return Ok((ow, oh, canvas));
+    }
+
     let geo = Geo { scale, ow, oh, ..geo };
 
     let mut canvas = vec![0u8; ow as usize * oh as usize * 4];

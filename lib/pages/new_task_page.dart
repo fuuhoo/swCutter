@@ -55,6 +55,7 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
       // 全局设置同步
       draft.tileSize = app.tileSize;
       draft.skipEmpty = app.skipEmpty;
+      draft.resample = app.resample;
       // 输出目录规则：<默认输出>/<tiff名>；未设置默认目录时用源旁 <tiff名>_tiles
       final stem = draft.fileName.contains('.')
           ? draft.fileName.substring(0, draft.fileName.lastIndexOf('.'))
@@ -97,20 +98,17 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 左：表单（无草稿时显示仅含输入选择的轻量版）
+                // 左：完整表单常驻（未选文件时各控件禁用）
                 SizedBox(
                   width: 430,
-                  child: active == null
-                      ? _NoSourceForm(onPickSource: _pickSource)
-                      : _FormColumn(active: active),
+                  child: _FormColumn(
+                    active: active,
+                    onPickSource: _pickSource,
+                  ),
                 ),
                 const SizedBox(width: 16),
-                // 右：预览（未选文件时给引导占位）
-                Expanded(
-                  child: active == null
-                      ? _NoSourceHint(onPick: _pickSource)
-                      : _PreviewPane(draft: active),
-                ),
+                // 右：预览（未选文件显示「暂无」）
+                Expanded(child: _PreviewPane(draft: active)),
               ],
             ),
           ),
@@ -184,9 +182,10 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
     final failures = <String>[];
     for (final d in List<TaskDraft>.from(store.drafts)) {
       try {
-        // 全局设置同步（瓦片尺寸/跳过透明在「设置」页维护）
+        // 全局设置同步（瓦片尺寸/跳过透明/重采样在「设置」页维护）
         d.tileSize = app.tileSize;
         d.skipEmpty = app.skipEmpty;
+        d.resample = app.resample;
         final id = await store.startDraft(d,
             outputOverride:
                 app.defaultOutput.isNotEmpty ? d.outputDir : null);
@@ -211,171 +210,117 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
   }
 }
 
-// ---------------- 空态拖拽区 ----------------
+// ---------------- 左侧表单（常驻，未选文件时禁用） ----------------
 
-/// 未选择文件时的左侧轻量表单：只有「输入」卡。
-class _NoSourceForm extends StatelessWidget {
-  final Future<void> Function() onPickSource;
-  const _NoSourceForm({required this.onPickSource});
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(shrinkWrap: true, children: [
-      _SectionCard(title: '输入', icon: Icons.file_open_rounded, children: [
-        TextFormField(
-          initialValue: '',
-          readOnly: true,
-          style: const TextStyle(fontSize: 12.5),
-          decoration: InputDecoration(
-            labelText: '输入 TIFF 文件',
-            hintText: '尚未选择文件',
-            prefixIcon: const Icon(Icons.image_rounded),
-            suffixIcon: IconButton(
-              tooltip: '选择 TIFF 文件',
-              icon: const Icon(Icons.file_open_rounded),
-              onPressed: onPickSource,
-            ),
-          ),
-        ),
-      ]),
-      const SizedBox(height: 10),
-    ]);
-  }
-}
-
-/// 未选择文件时的右侧引导。
-class _NoSourceHint extends StatelessWidget {
-  final Future<void> Function() onPick;
-  const _NoSourceHint({required this.onPick});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Center(
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.image_search_rounded, size: 64, color: cs.outline),
-        const SizedBox(height: 12),
-        Text('先在左侧选择一个 TIFF 文件',
-            style: TextStyle(color: cs.onSurfaceVariant)),
-        const SizedBox(height: 14),
-        FilledButton.tonalIcon(
-          onPressed: onPick,
-          icon: const Icon(Icons.file_open_rounded),
-          label: const Text('选择输入文件'),
-        ),
-      ]),
+TaskDraft _dummyDraft() => TaskDraft(
+      source: '',
+      fileName: '',
+      width: 0,
+      height: 0,
+      maxLevel: 0,
     );
-  }
-}
-
-// ---------------- 左侧表单 ----------------
 
 class _FormColumn extends ConsumerWidget {
-  final TaskDraft active;
-  const _FormColumn({required this.active});
+  final TaskDraft? active;
+  final Future<void> Function() onPickSource;
+  const _FormColumn({required this.active, required this.onPickSource});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final store = ref.read(draftProvider);
+    final d = active ?? _dummyDraft();
+    final locked = active == null;
+    final cs = Theme.of(context).colorScheme;
+
     return ListView(
       shrinkWrap: true,
       children: [
-        // ---- 输入（与输出同款：文本框 + 选择按钮）----
+        // ---- 输入 ----
         _SectionCard(title: '输入', icon: Icons.file_open_rounded, children: [
           TextFormField(
-            key: ValueKey(active.source),
-            initialValue: active.source,
+            key: ValueKey(active?.source),
+            initialValue: locked ? '' : active!.source,
             readOnly: true,
             style: const TextStyle(fontSize: 12.5),
             decoration: InputDecoration(
               labelText: '输入 TIFF 文件',
+              hintText: locked ? '尚未选择文件' : null,
               prefixIcon: const Icon(Icons.image_rounded),
+              suffixIcon: IconButton(
+                tooltip: '选择 TIFF 文件',
+                icon: const Icon(Icons.file_open_rounded),
+                onPressed: onPickSource,
+              ),
             ),
           ),
-          const SizedBox(height: 6),
-          Row(children: [
-            Icon(Icons.photo_size_select_large_rounded,
-                size: 14, color: Theme.of(context).colorScheme.outline),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                  '${active.width} × ${active.height} px'
-                  '${active.nativeZoom != null ? ' · 原始≈Z${active.nativeZoom}' : ''}',
-                  style: TextStyle(
-                      fontSize: 11.5,
-                      color: Theme.of(context).colorScheme.outline)),
-            ),
-          ]),
+          if (!locked) ...[
+            const SizedBox(height: 6),
+            Row(children: [
+              Icon(Icons.photo_size_select_large_rounded,
+                  size: 14, color: cs.outline),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                    '${active!.width} × ${active!.height} px'
+                    '${active!.nativeZoom != null ? ' · 原始≈Z${active!.nativeZoom}' : ''}',
+                    style: TextStyle(fontSize: 11.5, color: cs.outline)),
+              ),
+            ]),
+          ],
         ]),
         const SizedBox(height: 10),
 
+        // ---- 输出 ----
         _SectionCard(title: '输出', icon: Icons.output_rounded, children: [
           TextFormField(
-            key: ValueKey(active.outputDir),
-            initialValue: active.outputDir,
+            key: ValueKey(active?.outputDir),
+            initialValue: locked ? '' : active!.outputDir,
+            enabled: !locked,
             decoration: InputDecoration(
               labelText: '输出目录',
               prefixIcon: const Icon(Icons.folder_rounded),
               suffixIcon: IconButton(
                 tooltip: '选择文件夹',
                 icon: const Icon(Icons.folder_open_rounded),
-                onPressed: () async {
-                  final picked = await FilePicker.getDirectoryPath(
-                      dialogTitle: '选择输出目录');
-                  if (picked != null && picked.isNotEmpty) {
-                    active.outputDir = picked;
-                    store.touch();
-                  }
-                },
+                onPressed: locked
+                    ? null
+                    : () async {
+                        final picked = await FilePicker.getDirectoryPath(
+                            dialogTitle: '选择输出目录');
+                        if (picked != null && picked.isNotEmpty) {
+                          active!.outputDir = picked;
+                          store.touch();
+                        }
+                      },
               ),
             ),
-            onChanged: (v) => active.outputDir = v,
+            onChanged: (v) {
+              if (!locked) active!.outputDir = v;
+            },
           ),
-          if (active.estimateError.isNotEmpty)
+          if (!locked && active!.estimateError.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(active.estimateError,
-                  style: TextStyle(
-                      fontSize: 11.5,
-                      color: Theme.of(context).colorScheme.error)),
+              child: Text(active!.estimateError,
+                  style: TextStyle(fontSize: 11.5, color: cs.error)),
             ),
         ]),
 
+        // ---- 级别范围 ----
         _SectionCard(title: '级别范围', icon: Icons.layers_rounded, children: [
-          Row(
-            children: [
-              const Text('级别语义'),
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text('GDAL 绝对 · Web-Mercator',
-                    style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onPrimaryContainer)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
           RangeSlider(
-            values: RangeValues(active.zmin.toDouble(), active.zmax.toDouble()),
+            values: RangeValues(d.zmin.toDouble(), d.zmax.toDouble()),
             min: 0,
-            // 主流切片工具惯例：0–22 自由设置（可超原始分辨率）
             max: 22,
             divisions: 22,
-            labels: RangeLabels('Z${active.zmin}', 'Z${active.zmax}'),
-            onChanged: (v) {
-              active.zmin = v.start.round();
-              active.zmax = v.end.round();
-              store.refreshEstimates(active);
-            },
+            labels: RangeLabels('Z${d.zmin}', 'Z${d.zmax}'),
+            onChanged: locked
+                ? null
+                : (v) {
+                    active!.zmin = v.start.round();
+                    active!.zmax = v.end.round();
+                    store.refreshEstimates(active!);
+                  },
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -383,136 +328,137 @@ class _FormColumn extends ConsumerWidget {
               Text('Z0 单瓦片全览',
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
               Text(
-                '原始≈Z${active.nativeZoom ?? '?'}'
-                '${active.zmax > (active.nativeZoom ?? 22) ? ' · 超出截断至 Z${active.nativeZoom ?? '?'}' : ''}'
-                '${active.zmin > 0 ? ' · 跳过低级' : ''}',
+                locked
+                    ? 'GDAL 绝对 · Web-Mercator'
+                    : '原始≈Z${active!.nativeZoom ?? '?'}'
+                        '${active!.zmin > 0 ? ' · 跳过低级' : ''}',
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
               ),
             ],
           ),
         ]),
 
+        // ---- 排列方式 ----
         _SectionCard(title: '排列方式', icon: Icons.grid_view_rounded, children: [
-          SegmentedButton<Scheme>(
-            segments: const [
-              ButtonSegment(value: Scheme.xyz, label: Text('XYZ')),
-              ButtonSegment(value: Scheme.tms, label: Text('TMS')),
-            ],
-            selected: {active.scheme},
-            onSelectionChanged: (s) {
-              active.scheme = s.first;
-              store.touch();
-            },
+          IgnorePointer(
+            ignoring: locked,
+            child: SegmentedButton<Scheme>(
+              segments: const [
+                ButtonSegment(value: Scheme.xyz, label: Text('XYZ')),
+                ButtonSegment(value: Scheme.tms, label: Text('TMS')),
+              ],
+              selected: {d.scheme},
+              onSelectionChanged: (s) {
+                if (locked) return;
+                active!.scheme = s.first;
+                store.touch();
+              },
+            ),
           ),
           const SizedBox(height: 4),
           Text(
-            active.scheme == Scheme.xyz
+            d.scheme == Scheme.xyz
                 ? '{输出}/{z}/{x}/{y}.png — Google/OSM 兼容'
                 : '{输出}/{z}/{x}/{y}.png — Y 轴向下翻转',
             style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
           ),
         ]),
 
+        // ---- 透明处理 ----
         _SectionCard(title: '透明处理', icon: Icons.opacity_rounded, children: [
           DropdownButtonFormField<_AlphaChoice>(
-            // 外部（如预览点选取色）改变 alpha 时强制重建以同步选中项
-            key: ValueKey(active.alpha),
-            initialValue: _AlphaChoiceX.of(active.alpha),
+            key: ValueKey(active?.alpha),
+            initialValue: _AlphaChoiceX.of(d.alpha),
             items: const [
               DropdownMenuItem(value: _AlphaChoice.keep, child: Text('保留源透明通道')),
               DropdownMenuItem(value: _AlphaChoice.threshold, child: Text('Alpha 阈值 → 全透明')),
               DropdownMenuItem(value: _AlphaChoice.colorKey, child: Text('颜色键 → 透明（白底常用）')),
             ],
-            onChanged: (v) {
-              switch (v!) {
-                case _AlphaChoice.keep:
-                  active.alpha = const AlphaMode.keep();
-                case _AlphaChoice.threshold:
-                  active.alpha = const AlphaMode.threshold(below: 128);
-                case _AlphaChoice.colorKey:
-                  active.alpha = const AlphaMode.colorKey(r: 255, g: 255, b: 255, tolerance: 12);
-              }
-              store.touch();
-            },
-          ),
-          ...switch (active.alpha) {
-            AlphaMode_Keep() => [const SizedBox(height: 4)],
-            AlphaMode_Threshold(:final below) => [
-                Slider(
-                  value: below.toDouble(),
-                  min: 1,
-                  max: 254,
-                  label: '$below',
-                  divisions: 253,
-                  onChanged: (v) {
-                    active.alpha = AlphaMode.threshold(below: v.round());
+            onChanged: locked
+                ? null
+                : (v) {
+                    switch (v!) {
+                      case _AlphaChoice.keep:
+                        active!.alpha = const AlphaMode.keep();
+                      case _AlphaChoice.threshold:
+                        active!.alpha = const AlphaMode.threshold(below: 128);
+                      case _AlphaChoice.colorKey:
+                        active!.alpha =
+                            AlphaMode.colorKey(r: 255, g: 255, b: 255, tolerance: 12);
+                    }
                     store.touch();
                   },
-                ),
-                Text('低于 $below 的像素将被置为完全透明',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-              ],
-            AlphaMode_ColorKey(:final r, :final g, :final b, :final tolerance) => [
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Container(width: 16, height: 16,
-                      decoration: BoxDecoration(
-                        color: Color.fromARGB(255, r, g, b),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white24),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    _NumField(label: 'R', value: r, onChanged: (v) {
-                      final a = active.alpha as AlphaMode_ColorKey;
-                      active.alpha = AlphaMode.colorKey(r: v, g: a.g, b: a.b, tolerance: a.tolerance);
-                      store.touch();
-                    }),
-                    const SizedBox(width: 6),
-                    _NumField(label: 'G', value: g, onChanged: (v) {
-                      final a = active.alpha as AlphaMode_ColorKey;
-                      active.alpha = AlphaMode.colorKey(r: a.r, g: v, b: a.b, tolerance: a.tolerance);
-                      store.touch();
-                    }),
-                    const SizedBox(width: 6),
-                    _NumField(label: 'B', value: b, onChanged: (v) {
-                      final a = active.alpha as AlphaMode_ColorKey;
-                      active.alpha = AlphaMode.colorKey(r: a.r, g: a.g, b: v, tolerance: a.tolerance);
-                      store.touch();
-                    }),
-                    const SizedBox(width: 6),
-                    _NumField(label: '容差', value: tolerance, onChanged: (v) {
-                      final a = active.alpha as AlphaMode_ColorKey;
-                      active.alpha = AlphaMode.colorKey(r: a.r, g: a.g, b: a.b, tolerance: v);
-                      store.touch();
-                    }),
-                  ],
-                ),
-                Text('可直接在右侧预览图上点击取色，容差 $tolerance',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-              ],
-          },
-        ]),
-
-        _SectionCard(title: '重采样', icon: Icons.texture_rounded, children: [
-          SegmentedButton<Resample>(
-            segments: const [
-              ButtonSegment(value: Resample.nearest, label: Text('最近邻')),
-              ButtonSegment(value: Resample.bilinear, label: Text('双线性')),
-            ],
-            selected: {active.resample},
-            onSelectionChanged: (s) {
-              active.resample = s.first;
-              store.touch();
-            },
           ),
+          if (!locked)
+            ...switch (active!.alpha) {
+              AlphaMode_Keep() => [const SizedBox(height: 4)],
+              AlphaMode_Threshold(:final below) => [
+                  Slider(
+                    value: below.toDouble(),
+                    min: 1,
+                    max: 254,
+                    label: '$below',
+                    divisions: 253,
+                    onChanged: (v) {
+                      active!.alpha = AlphaMode.threshold(below: v.round());
+                      store.touch();
+                    },
+                  ),
+                  Text('低于 $below 的像素将被置为完全透明',
+                      style:
+                          TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                ],
+              AlphaMode_ColorKey(:final r, :final g, :final b, :final tolerance) => [
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Container(width: 16, height: 16,
+                        decoration: BoxDecoration(
+                          color: Color.fromARGB(255, r, g, b),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white24),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _NumField(label: 'R', value: r, onChanged: (v) {
+                        final a = active!.alpha as AlphaMode_ColorKey;
+                        active!.alpha = AlphaMode.colorKey(
+                            r: v, g: a.g, b: a.b, tolerance: a.tolerance);
+                        store.touch();
+                      }),
+                      const SizedBox(width: 6),
+                      _NumField(label: 'G', value: g, onChanged: (v) {
+                        final a = active!.alpha as AlphaMode_ColorKey;
+                        active!.alpha = AlphaMode.colorKey(
+                            r: a.r, g: v, b: a.b, tolerance: a.tolerance);
+                        store.touch();
+                      }),
+                      const SizedBox(width: 6),
+                      _NumField(label: 'B', value: b, onChanged: (v) {
+                        final a = active!.alpha as AlphaMode_ColorKey;
+                        active!.alpha = AlphaMode.colorKey(
+                            r: a.r, g: a.g, b: v, tolerance: a.tolerance);
+                        store.touch();
+                      }),
+                      const SizedBox(width: 6),
+                      _NumField(label: '容差', value: tolerance, onChanged: (v) {
+                        final a = active!.alpha as AlphaMode_ColorKey;
+                        active!.alpha = AlphaMode.colorKey(
+                            r: a.r, g: a.g, b: a.b, tolerance: v);
+                        store.touch();
+                      }),
+                    ],
+                  ),
+                  Text('可直接在右侧预览图上点击取色，容差 $tolerance',
+                      style:
+                          TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                ],
+            },
         ]),
       ],
     );
   }
 }
-
 enum _AlphaChoice { keep, threshold, colorKey }
 
 extension _AlphaChoiceX on _AlphaChoice {
@@ -580,7 +526,7 @@ class _SectionCard extends StatelessWidget {
 // ---------------- 右侧预览 ----------------
 
 class _PreviewPane extends ConsumerStatefulWidget {
-  final TaskDraft draft;
+  final TaskDraft? draft;
   const _PreviewPane({required this.draft});
 
   @override
@@ -610,7 +556,7 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
       d.previewBytes != null ? _pngSize(d.previewBytes!) : const Size(320, 260);
 
   void _scheduleDecode() {
-    final bytes = widget.draft.previewBytes;
+    final bytes = widget.draft?.previewBytes;
     if (bytes == null || identical(_decodedFor, bytes)) return;
     _decodedFor = bytes;
     decodeImageFromList(bytes).then((img) {
@@ -629,7 +575,7 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
   @override
   void didUpdateWidget(covariant _PreviewPane old) {
     super.didUpdateWidget(old);
-    if (!identical(old.draft.previewBytes, widget.draft.previewBytes)) {
+    if (!identical(old.draft?.previewBytes, widget.draft?.previewBytes)) {
       _previewSize = null;
       _pickMark = null;
     }
@@ -646,6 +592,7 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
   Future<void> _onPick(Offset localPx) async {
     final size = _previewSize;
     final draft = widget.draft;
+    if (draft == null) return;
     if (size == null || size.width < 1 || size.height < 1) return;
     // 门控：只有颜色键模式才拾取，避免无意义改参
     if (draft.alpha is! AlphaMode_ColorKey) {
@@ -712,6 +659,22 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
     ref.watch(draftProvider);
     final cs = Theme.of(context).colorScheme;
     final draft = widget.draft;
+
+    if (draft == null) {
+      return Card(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Center(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.image_not_supported_rounded,
+                  size: 56, color: cs.outline),
+              const SizedBox(height: 10),
+              Text('暂无预览', style: TextStyle(color: cs.outline)),
+            ]),
+          ),
+        ),
+      );
+    }
 
     final totalTiles = draft.estimates?.fold<int>(0, (a, e) => a + e.tiles.toInt()) ?? 0;
 

@@ -30,6 +30,8 @@ class AppState extends ChangeNotifier {
   int tileSize = 256;
   /// 全局：跳过全透明瓦片（默认关，与 gdal2tiles 行为一致）
   bool skipEmpty = false;
+  /// 全局重采样方式
+  Resample resample = Resample.bilinear;
 
   bool settingsLoaded = false;
 
@@ -43,6 +45,7 @@ class AppState extends ChangeNotifier {
         themeMode = ThemeMode.values.asMap()[j['themeMode'] ?? 0] ?? ThemeMode.dark;
         tileSize = (j['tileSize'] as num?)?.toInt() ?? 256;
         skipEmpty = (j['skipEmpty'] as bool?) ?? false;
+        resample = (j['resample'] as int?) == 0 ? Resample.nearest : Resample.bilinear;
       }
       settingsLoaded = true;
       notifyListeners();
@@ -61,6 +64,7 @@ class AppState extends ChangeNotifier {
         'themeMode': themeMode.index,
         'tileSize': tileSize,
         'skipEmpty': skipEmpty,
+        'resample': resample == Resample.nearest ? 0 : 1,
       }));
     } catch (_) {}
   }
