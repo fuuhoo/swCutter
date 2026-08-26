@@ -166,7 +166,7 @@ let scale = 1, cx = CFG.w/2, cy = CFG.h/2;
 const cache = new Set();
 const imgs = [];
 // 前置声明：apply() 首帧（fit→apply）就会触达这些绑定，必须先于调用点初始化
-let curL=null; let tsGuard=0; let ovImgs=[];
+let curL=null; let tsGuard=0; let ovImgs=[]; let overlays=[];
 
 function lvlMeta(){ 
   const want = Math.round(CFG.zmax - Math.log2(scale));
@@ -198,6 +198,8 @@ function apply(){
       img.style.left = sx+'px'; img.style.top = sy+'px';
       img.style.width = (ts+1)+'px'; img.style.height=(ts+1)+'px';
       img.src = `${L.z}/${tx}/${dy}.png`;
+      // 中断的任务可能缺块：静默移除，避免碎图标与控制台噪音
+      img.onerror=()=>img.remove();
       map.appendChild(img); imgs.push(img);
     }
   }
@@ -242,7 +244,7 @@ fit();
 const LS_KEY='swcutter_overlays', LS_TK='swcutter_tk';
 // 全局设置(CFG.overlays)优先；本页 localStorage 修改仅作回退/临时覆盖
 const cfgOv = Array.isArray(CFG.overlays) ? JSON.parse(JSON.stringify(CFG.overlays)) : [];
-let overlays = cfgOv;
+overlays = cfgOv;
 try{
   const parsed = JSON.parse(localStorage.getItem(LS_KEY)||'null');
   if(!(cfgOv.length) && Array.isArray(parsed)) overlays = parsed;
