@@ -11,8 +11,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'task_api.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `acquire`, `broadcast`, `default_concurrency`, `log`, `manager`, `new`, `release`, `to_dto`, `worker`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Gate`, `Manager`, `SlotGuard`, `Snap`, `TaskEntry`
+// These functions are ignored because they are not marked as `pub`: `acquire`, `broadcast`, `default_concurrency`, `history_path`, `is_terminal`, `load_history`, `log`, `manager`, `new`, `now_ms`, `persist`, `release`, `to_dto`, `worker`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Gate`, `HistoryRec`, `Manager`, `SlotGuard`, `Snap`, `TaskEntry`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
@@ -237,6 +237,10 @@ class TaskDto {
   final BigInt elapsedMs;
   final String? error;
 
+  /// 开始 / 完成时刻（Unix 毫秒；0 表示未知）
+  final BigInt startedAtMs;
+  final BigInt finishedAtMs;
+
   const TaskDto({
     required this.id,
     required this.source,
@@ -254,6 +258,8 @@ class TaskDto {
     required this.bytesWritten,
     required this.elapsedMs,
     this.error,
+    required this.startedAtMs,
+    required this.finishedAtMs,
   });
 
   @override
@@ -273,7 +279,9 @@ class TaskDto {
       totalTiles.hashCode ^
       bytesWritten.hashCode ^
       elapsedMs.hashCode ^
-      error.hashCode;
+      error.hashCode ^
+      startedAtMs.hashCode ^
+      finishedAtMs.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -295,7 +303,9 @@ class TaskDto {
           totalTiles == other.totalTiles &&
           bytesWritten == other.bytesWritten &&
           elapsedMs == other.elapsedMs &&
-          error == other.error;
+          error == other.error &&
+          startedAtMs == other.startedAtMs &&
+          finishedAtMs == other.finishedAtMs;
 }
 
 class TaskEvent {

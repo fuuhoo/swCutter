@@ -571,30 +571,35 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
     super.dispose();
   }
 
-  /// 点击取色：映射到源图坐标 → Rust 精确采样 → 写入颜色键。
+  /// 点击取色：仅颜色键模式下有效；映射源坐标 → Rust 精确采样 → 写入颜色键。
   Future<void> _onPick(Offset localPx) async {
     final size = _previewSize;
     final draft = widget.draft;
     if (size == null || size.width < 1 || size.height < 1) return;
+    // 门控：只有颜色键模式才拾取，避免无意义改参
+    if (draft.alpha is! AlphaMode_ColorKey) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('请先在左侧「透明处理」中选择「颜色键 → 透明」，再点击图像取色'),
+        duration: Duration(seconds: 2),
+      ));
+      return;
+    }
     final sx = (localPx.dx / size.width * draft.width).floor().clamp(0, draft.width - 1);
     final sy = (localPx.dy / size.height * draft.height).floor().clamp(0, draft.height - 1);
     try {
       final px = await rust.samplePixel(source: draft.source, x: sx, y: sy);
       final r = px[0], g = px[1], b = px[2];
-      final wasColorKey = draft.alpha is AlphaMode_ColorKey;
-      int keepTol = 12;
-      if (wasColorKey) keepTol = (draft.alpha as AlphaMode_ColorKey).tolerance;
+      final a = draft.alpha as AlphaMode_ColorKey;
+      final keepTol = a.tolerance;
 
-      final prevKey = wasColorKey
-          ? Color.fromARGB(255, (draft.alpha as AlphaMode_ColorKey).r,
-              (draft.alpha as AlphaMode_ColorKey).g, (draft.alpha as AlphaMode_ColorKey).b)
-          : null;
+      final prevKey = Color.fromARGB(255, a.r, a.g, a.b);
       final newKey = Color.fromARGB(255, r, g, b);
 
       draft.alpha = AlphaMode.colorKey(r: r, g: g, b: b, tolerance: keepTol);
       ref.read(draftProvider).touch();
 
-      // 视觉反馈：图像内取色标记 + 十字光标处色点，800ms 淡出
+      // 视觉反馈：图像内取色标记，900ms 淡出
       setState(() {
         _pickMark = localPx;
         _pickColor = newKey;
@@ -604,14 +609,9 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
         if (mounted) setState(() => _pickMark = null);
       });
 
-      // 打扰最小化：仅模式切换或颜色变化时提示
+      // 打扰最小化：仅颜色实际变化时提示
       if (!mounted) return;
-      if (!wasColorKey) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('已拾取 #${_hex(r, g, b)} 并启用颜色键透明'),
-          duration: const Duration(seconds: 2),
-        ));
-      } else if (prevKey != newKey) {
+      if (prevKey != newKey) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Row(children: [
@@ -655,7 +655,9 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
                 children: [
                   if (draft.previewBytes != null)
                     MouseRegion(
-                      cursor: SystemMouseCursors.precise,
+                      cursor: draft.alpha is AlphaMode_ColorKey
+                          ? SystemMouseCursors.precise
+                          : MouseCursor.defer,
                       child: InteractiveViewer(
                         maxScale: 12,
                         child: FittedBox(
@@ -755,12 +757,25 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
                                 borderRadius: BorderRadius.circular(999),
                               ),
                               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                Icon(Icons.colorize_rounded,
-                                    size: 12, color: cs.primary),
+                                Icon(
+                                  draft.alpha is AlphaMode_ColorKey
+                                      ? Icons.colorize_rounded
+                                      : Icons.lock_outline_rounded,
+                                  size: 12,
+                                  color: draft.alpha is AlphaMode_ColorKey
+                                      ? cs.primary
+                                      : cs.outline,
+                                ),
                                 const SizedBox(width: 5),
-                                Text('点击图像拾取透明色',
-                                    style: TextStyle(
-                                        fontSize: 11, color: cs.onSurface.withValues(alpha: 0.85))),
+                                Text(
+                                  draft.alpha is AlphaMode_ColorKey
+                                      ? '点击图像拾取透明色'
+                                      : '选「颜色键」后可点图取色',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: cs.onSurface
+                                          .withValues(alpha: draft.alpha is AlphaMode_ColorKey ? 0.85 : 0.55)),
+                                ),
                               ]),
                             ),
                           ],

@@ -104,6 +104,9 @@ pub struct TaskDto {
     pub bytes_written: u64,
     pub elapsed_ms: u64,
     pub error: Option<String>,
+    /// 开始 / 完成时刻（Unix 毫秒；0 表示未知）
+    pub started_at_ms: u64,
+    pub finished_at_ms: u64,
 }
 
 // ---------------- 内部状态 ----------------
@@ -128,6 +131,16 @@ struct TaskEntry {
     snap: Mutex<Snap>,
     error: Mutex<Option<String>>,
     started_at: Mutex<Option<std::time::Instant>>,
+    /// Unix 毫秒时间戳
+    started_ms: Mutex<u64>,
+    finished_ms: Mutex<u64>,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[frb(ignore)]
@@ -179,13 +192,138 @@ struct Manager {
 fn manager() -> &'static Manager {
     static MANAGER: OnceLock<Arc<Manager>> = OnceLock::new();
     MANAGER.get_or_init(|| {
-        Arc::new(Manager {
+        let mgr = Arc::new(Manager {
             tasks: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(1),
             gate: Gate::new(default_concurrency()),
             sink: Mutex::new(None),
-        })
+        });
+        load_history(&mgr);
+        mgr
     })
+}
+
+// ---------------- 历史持久化 ----------------
+
+/// 历史记录文件：%APPDATA%\swCutter\history.json
+fn history_path() -> Option<PathBuf> {
+    std::env::var("APPDATA").ok().map(|d| {
+        PathBuf::from(d).join("swCutter").join("history.json")
+    })
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct HistoryRec {
+    id: u64,
+    source: String,
+    output: String,
+    tile_size: u32,
+    scheme: Scheme,
+    alpha: AlphaMode,
+    resample: Resample,
+    zmin: Option<u32>,
+    zmax: Option<u32>,
+    status: String,
+    level: u32,
+    tiles_done: u64,
+    total_tiles: u64,
+    bytes_written: u64,
+    elapsed_ms: u64,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    started_ms: u64,
+    #[serde(default)]
+    finished_ms: u64,
+}
+
+fn is_terminal(status: &str) -> bool {
+    matches!(status, "done" | "error" | "cancelled")
+}
+
+/// 启动时把 history.json 恢复为只读冷任务（无工作线程）。
+fn load_history(mgr: &Manager) {
+    let Some(p) = history_path() else { return };
+    let Ok(raw) = std::fs::read_to_string(p) else { return };
+    let Ok(recs) = serde_json::from_str::<Vec<HistoryRec>>(&raw) else { return };
+    if recs.is_empty() { return; }
+    let mut max_id = 0u64;
+    let mut entries = Vec::new();
+    for r in recs {
+        max_id = max_id.max(r.id);
+        // 非终态（上次运行中断）→ 标记为取消并注明
+        let (status, error) = if is_terminal(&r.status) {
+            (r.status.clone(), r.error.clone())
+        } else {
+            ("cancelled".into(), Some("应用退出导致中断（可重跑同参数续切）".to_string()))
+        };
+        entries.push(Arc::new(TaskEntry {
+            id: r.id,
+            cfg: TaskConfig {
+                source: r.source,
+                output: r.output,
+                tile_size: r.tile_size,
+                zmin: r.zmin,
+                zmax: r.zmax,
+                scheme: r.scheme,
+                alpha: r.alpha,
+                resample: r.resample,
+            },
+            status: Mutex::new(status),
+            cancel: AtomicBool::new(true),
+            control: TaskControl::new(),
+            snap: Mutex::new(Snap {
+                level: r.level,
+                tiles_done: r.tiles_done,
+                total_tiles: r.total_tiles,
+                bytes_written: r.bytes_written,
+                elapsed_ms: r.elapsed_ms,
+            }),
+            error: Mutex::new(error),
+            started_at: Mutex::new(None),
+            started_ms: Mutex::new(r.started_ms),
+            finished_ms: Mutex::new(r.finished_ms),
+        }));
+    }
+    mgr.next_id.store(max_id + 1, Ordering::Relaxed);
+    *mgr.tasks.lock().unwrap() = entries;
+}
+
+/// 把当前全部任务（含冷历史）写回 history.json。
+fn persist(mgr: &Manager) {
+    let Some(p) = history_path() else { return };
+    let recs: Vec<HistoryRec> = mgr.tasks.lock().unwrap().iter().map(|e| {
+        let snap = e.snap.lock().unwrap().clone();
+        HistoryRec {
+            id: e.id,
+            source: e.cfg.source.clone(),
+            output: e.cfg.output.clone(),
+            tile_size: e.cfg.tile_size,
+            scheme: e.cfg.scheme,
+            alpha: e.cfg.alpha.clone(),
+            resample: e.cfg.resample,
+            zmin: e.cfg.zmin,
+            zmax: e.cfg.zmax,
+            status: e.status.lock().unwrap().clone(),
+            level: snap.level,
+            tiles_done: snap.tiles_done,
+            total_tiles: snap.total_tiles,
+            bytes_written: snap.bytes_written,
+            elapsed_ms: snap.elapsed_ms,
+            error: e.error.lock().unwrap().clone(),
+            started_ms: *e.started_ms.lock().unwrap(),
+            finished_ms: *e.finished_ms.lock().unwrap(),
+        }
+    }).collect();
+    if let Ok(json) = serde_json::to_string_pretty(&recs) {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = p.with_extension("json.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, &p);
+        }
+    }
 }
 
 fn default_concurrency() -> u32 {
@@ -305,6 +443,8 @@ pub fn start_task(cfg: TaskConfig) -> anyhow::Result<u64> {
         snap: Mutex::new(Snap::default()),
         error: Mutex::new(None),
         started_at: Mutex::new(None),
+        started_ms: Mutex::new(0),
+        finished_ms: Mutex::new(0),
     });
     mgr.tasks.lock().unwrap().push(Arc::clone(&entry));
     log(
@@ -314,6 +454,7 @@ pub fn start_task(cfg: TaskConfig) -> anyhow::Result<u64> {
             cfg.source, cfg.output
         ),
     );
+    persist(mgr);
     broadcast(
         mgr,
         TaskEvent {
@@ -334,6 +475,8 @@ pub fn cancel_task(id: u64) -> anyhow::Result<bool> {
         e.cancel.store(true, Ordering::Relaxed);
         e.control.cancel.store(true, Ordering::Relaxed);
         log("info", &format!("task#{id} cancel requested"));
+        drop(tasks);
+        persist(mgr);
         Ok(true)
     } else {
         Ok(false)
@@ -351,6 +494,8 @@ pub fn pause_task(id: u64) -> anyhow::Result<bool> {
         e.control.paused.store(true, Ordering::Relaxed);
         *e.status.lock().unwrap() = "paused".into();
         log("info", &format!("task#{id} paused"));
+        drop(tasks);
+        persist(mgr);
         broadcast(
             mgr,
             TaskEvent {
@@ -375,6 +520,8 @@ pub fn resume_task(id: u64) -> anyhow::Result<bool> {
         e.control.paused.store(false, Ordering::Relaxed);
         *e.status.lock().unwrap() = "running".into();
         log("info", &format!("task#{id} resumed"));
+        drop(tasks);
+        persist(mgr);
         broadcast(
             mgr,
             TaskEvent {
@@ -395,13 +542,18 @@ pub fn remove_task(id: u64) -> anyhow::Result<bool> {
         if let Some(pos) = tasks.iter().position(|t| t.id == id) {
             let e = tasks.remove(pos);
             if *e.status.lock().unwrap() == "running" {
-                return Ok(false); // 运行中的不允许移除，先取消
+                tasks.insert(pos, e); // 放回去：运行中的不允许移除，先取消
+                false
+            } else {
+                true
             }
-            true
         } else {
             false
         }
     };
+    if removed {
+        persist(mgr);
+    }
     Ok(removed)
 }
 
@@ -450,6 +602,8 @@ fn to_dto(e: &Arc<TaskEntry>) -> TaskDto {
         bytes_written: snap.bytes_written,
         elapsed_ms,
         error: e.error.lock().unwrap().clone(),
+        started_at_ms: *e.started_ms.lock().unwrap(),
+        finished_at_ms: *e.finished_ms.lock().unwrap(),
     }
 }
 
@@ -461,6 +615,8 @@ fn worker(entry: Arc<TaskEntry>) {
     // 排队等待槽位（可被打断）
     if !mgr.gate.acquire(&entry.cancel) {
         *entry.status.lock().unwrap() = "cancelled".into();
+        *entry.finished_ms.lock().unwrap() = now_ms();
+        persist(mgr);
         broadcast(
             mgr,
             TaskEvent {
@@ -476,7 +632,9 @@ fn worker(entry: Arc<TaskEntry>) {
     let _slot_release = SlotGuard;
 
     *entry.started_at.lock().unwrap() = Some(std::time::Instant::now());
+    *entry.started_ms.lock().unwrap() = now_ms();
     *entry.status.lock().unwrap() = "running".into();
+    persist(mgr);
     broadcast(
         mgr,
         TaskEvent {
@@ -565,6 +723,8 @@ fn worker(entry: Arc<TaskEntry>) {
         "done"
     }
     .into();
+    *entry.finished_ms.lock().unwrap() = now_ms();
+    persist(mgr);
 
     broadcast(
         mgr,

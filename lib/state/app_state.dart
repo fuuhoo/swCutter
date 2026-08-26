@@ -86,7 +86,12 @@ class AppState extends ChangeNotifier {
     if (k is api.TaskEventKind_StatusChanged) {
       tasks[idx] = _copyWith(tasks[idx], status: k.status);
     } else if (k is api.TaskEventKind_Started) {
-      var t = _copyWith(tasks[idx], status: 'running', totalTiles: k.totalTiles.toInt());
+      var t = _copyWith(
+        tasks[idx],
+        status: 'running',
+        totalTiles: k.totalTiles.toInt(),
+        startedAtMs: BigInt.from(DateTime.now().millisecondsSinceEpoch),
+      );
       tasks[idx] = t;
     } else if (k is api.TaskEventKind_LevelStart) {
       tasks[idx] = _copyWith(tasks[idx], level: k.level);
@@ -107,6 +112,7 @@ class AppState extends ChangeNotifier {
         bytesWritten: s.bytesWritten.toInt(),
         elapsedMs: s.elapsedMs,
         error: s.error,
+        finishedAtMs: BigInt.from(DateTime.now().millisecondsSinceEpoch),
       );
       t = _copyWith(
         t,
@@ -126,6 +132,8 @@ class AppState extends ChangeNotifier {
     int? totalTiles,
     int? bytesWritten,
     BigInt? elapsedMs,
+    BigInt? startedAtMs,
+    BigInt? finishedAtMs,
     String? error,
   }) {
     return api.TaskDto(
@@ -144,6 +152,8 @@ class AppState extends ChangeNotifier {
       totalTiles: BigInt.from(totalTiles ?? t.totalTiles.toInt()),
       bytesWritten: BigInt.from(bytesWritten ?? t.bytesWritten.toInt()),
       elapsedMs: elapsedMs ?? t.elapsedMs,
+      startedAtMs: startedAtMs ?? t.startedAtMs,
+      finishedAtMs: finishedAtMs ?? t.finishedAtMs,
       error: error ?? t.error,
     );
   }

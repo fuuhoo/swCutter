@@ -61,14 +61,14 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             ),
             destinations: [
               const NavigationRailDestination(
-                icon: Icon(Icons.queue_rounded),
-                selectedIcon: Icon(Icons.queue_rounded),
-                label: Text('任务中心'),
-              ),
-              const NavigationRailDestination(
                 icon: Icon(Icons.add_circle_outline_rounded),
                 selectedIcon: Icon(Icons.add_circle_rounded),
                 label: Text('新建任务'),
+              ),
+              const NavigationRailDestination(
+                icon: Icon(Icons.queue_rounded),
+                selectedIcon: Icon(Icons.queue_rounded),
+                label: Text('任务中心'),
               ),
               const NavigationRailDestination(
                 icon: Icon(Icons.settings_outlined),
@@ -82,7 +82,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             child: SwitchView(
               index: _index,
               runningCount: runningCount,
-              onGoNewTask: () => setState(() => _index = 1),
+              onGoTasks: () => setState(() => _index = 1),
             ),
           ),
         ],
@@ -94,23 +94,23 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 class SwitchView extends StatelessWidget {
   final int index;
   final int runningCount;
-  final VoidCallback onGoNewTask;
+  final VoidCallback onGoTasks;
   const SwitchView({
     super.key,
     required this.index,
     required this.runningCount,
-    required this.onGoNewTask,
+    required this.onGoTasks,
   });
 
   @override
   Widget build(BuildContext context) {
     switch (index) {
       case 1:
-        return const NewTaskPage();
+        return TasksPage(onGoNewTask: onGoTasks);
       case 2:
         return const SettingsPage();
       default:
-        return TasksPage(onGoNewTask: onGoNewTask);
+        return const NewTaskPage();
     }
   }
 }

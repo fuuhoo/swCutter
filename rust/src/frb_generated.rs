@@ -847,6 +847,8 @@ impl SseDecode for crate::api::task_api::TaskDto {
         let mut var_bytesWritten = <u64>::sse_decode(deserializer);
         let mut var_elapsedMs = <u64>::sse_decode(deserializer);
         let mut var_error = <Option<String>>::sse_decode(deserializer);
+        let mut var_startedAtMs = <u64>::sse_decode(deserializer);
+        let mut var_finishedAtMs = <u64>::sse_decode(deserializer);
         return crate::api::task_api::TaskDto {
             id: var_id,
             source: var_source,
@@ -864,6 +866,8 @@ impl SseDecode for crate::api::task_api::TaskDto {
             bytes_written: var_bytesWritten,
             elapsed_ms: var_elapsedMs,
             error: var_error,
+            started_at_ms: var_startedAtMs,
+            finished_at_ms: var_finishedAtMs,
         };
     }
 }
@@ -1191,6 +1195,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::task_api::TaskDto {
             self.bytes_written.into_into_dart().into_dart(),
             self.elapsed_ms.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
+            self.started_at_ms.into_into_dart().into_dart(),
+            self.finished_at_ms.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1517,6 +1523,8 @@ impl SseEncode for crate::api::task_api::TaskDto {
         <u64>::sse_encode(self.bytes_written, serializer);
         <u64>::sse_encode(self.elapsed_ms, serializer);
         <Option<String>>::sse_encode(self.error, serializer);
+        <u64>::sse_encode(self.started_at_ms, serializer);
+        <u64>::sse_encode(self.finished_at_ms, serializer);
     }
 }
 

@@ -758,8 +758,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskDto dco_decode_task_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 16)
-      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
+    if (arr.length != 18)
+      throw Exception('unexpected arr length: expect 18 but see ${arr.length}');
     return TaskDto(
       id: dco_decode_u_64(arr[0]),
       source: dco_decode_String(arr[1]),
@@ -777,6 +777,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       bytesWritten: dco_decode_u_64(arr[13]),
       elapsedMs: dco_decode_u_64(arr[14]),
       error: dco_decode_opt_String(arr[15]),
+      startedAtMs: dco_decode_u_64(arr[16]),
+      finishedAtMs: dco_decode_u_64(arr[17]),
     );
   }
 
@@ -1107,6 +1109,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_bytesWritten = sse_decode_u_64(deserializer);
     var var_elapsedMs = sse_decode_u_64(deserializer);
     var var_error = sse_decode_opt_String(deserializer);
+    var var_startedAtMs = sse_decode_u_64(deserializer);
+    var var_finishedAtMs = sse_decode_u_64(deserializer);
     return TaskDto(
       id: var_id,
       source: var_source,
@@ -1124,6 +1128,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       bytesWritten: var_bytesWritten,
       elapsedMs: var_elapsedMs,
       error: var_error,
+      startedAtMs: var_startedAtMs,
+      finishedAtMs: var_finishedAtMs,
     );
   }
 
@@ -1438,6 +1444,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_64(self.bytesWritten, serializer);
     sse_encode_u_64(self.elapsedMs, serializer);
     sse_encode_opt_String(self.error, serializer);
+    sse_encode_u_64(self.startedAtMs, serializer);
+    sse_encode_u_64(self.finishedAtMs, serializer);
   }
 
   @protected

@@ -21,6 +21,18 @@ String fmtDuration(int ms) {
   return '${s}s';
 }
 
+/// Unix 毫秒 → 本地时间文本；今天只显示时分秒，往年月日。
+String fmtTime(int ms) {
+  if (ms <= 0) return '—';
+  final dt = DateTime.fromMillisecondsSinceEpoch(ms);
+  final now = DateTime.now();
+  final sameDay = dt.year == now.year && dt.month == now.month && dt.day == now.day;
+  String two(int v) => v.toString().padLeft(2, '0');
+  final hms = '${two(dt.hour)}:${two(dt.minute)}:${two(dt.second)}';
+  if (sameDay) return hms;
+  return '${dt.year}-${two(dt.month)}-${two(dt.day)} $hms';
+}
+
 String schemeName(Scheme s) => s == Scheme.xyz ? 'XYZ' : 'TMS';
 
 /// 状态徽章颜色。
@@ -151,11 +163,19 @@ class TaskCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 4,
               children: [
+                _Meta(icon: Icons.play_circle_outline_rounded,
+                    text: '开始 ${fmtTime(t.startedAtMs.toInt())}'),
+                if (finished)
+                  _Meta(icon: Icons.check_circle_outline_rounded,
+                      text: '完成 ${fmtTime(t.finishedAtMs.toInt())}'),
+                if (t.elapsedMs != BigInt.zero && (running || finished || t.status == 'paused'))
+                  _Meta(icon: Icons.timer_outlined, text: '总用时 ${fmtDuration(t.elapsedMs.toInt())}'),
                 if (t.status == 'queued')
                   _Meta(icon: Icons.hourglass_empty_rounded, text: '等待空闲槽位'),
-                if (running || finished) ...[
+                if (running || finished || t.status == 'paused') ...[
+                  if (running) _Meta(icon: Icons.stairs_rounded, text: '当前 L${t.level}'),
                   _Meta(icon: Icons.grid_view_rounded,
-                      text: 'L${t.level} · ${t.tilesDone} / ${t.totalTiles} 瓦片'),
+                      text: 'Z${t.zmin ?? 0}–Z${t.zmax ?? '?'} · ${t.tilesDone} / ${t.totalTiles} 瓦片'),
                   if (eta != null)
                     _Meta(icon: Icons.schedule_rounded, text: '剩余约 $eta'),
                 ],
@@ -163,8 +183,6 @@ class TaskCard extends StatelessWidget {
                   _Meta(icon: Icons.speed_rounded, text: '${fmtBytes(speed!)} /s'),
                 if (t.bytesWritten != BigInt.zero)
                   _Meta(icon: Icons.save_rounded, text: fmtBytes(t.bytesWritten.toInt())),
-                if (t.elapsedMs != BigInt.zero && finished)
-                  _Meta(icon: Icons.timer_outlined, text: '用时 ${fmtDuration(t.elapsedMs.toInt())}'),
                 _Meta(icon: Icons.alt_route_rounded, text: schemeName(t.scheme)),
                 _Meta(icon: Icons.opacity_rounded, text: alphaLabel(t.alpha)),
               ],
@@ -199,28 +217,32 @@ class TaskCard extends StatelessWidget {
                     label: const Text('取消'),
                   ),
                 ],
-                if (finished) ...[
-                  FilledButton.tonalIcon(
+                // 打开目录：除排队外任何状态都可用
+                if (t.status != 'queued') ...[
+                  if (running || t.status == 'paused') const SizedBox(width: 8),
+                  OutlinedButton.icon(
                     onPressed: onOpenFolder,
                     icon: const Icon(Icons.folder_open_rounded, size: 16),
-                    label: const Text('打开目录'),
+                    label: const Text('打开文件夹'),
                   ),
+                ],
+                // 浏览器预览：仅成功完成
+                if (t.status == 'done') ...[
                   const SizedBox(width: 8),
-                  if (t.status == 'done')
-                    FilledButton.icon(
-                      onPressed: onPreview,
-                      icon: const Icon(Icons.public_rounded, size: 16),
-                      label: const Text('浏览器预览'),
-                    ),
-                  const Spacer(),
+                  FilledButton.icon(
+                    onPressed: onPreview,
+                    icon: const Icon(Icons.public_rounded, size: 16),
+                    label: const Text('浏览器预览'),
+                  ),
+                ],
+                const Spacer(),
+                if (finished)
                   IconButton(
                     tooltip: '移除记录',
                     onPressed: onRemove,
                     icon: Icon(Icons.delete_outline_rounded,
                         size: 18, color: cs.outline),
                   ),
-                ] else
-                  const Spacer(),
               ],
             ),
           ],
