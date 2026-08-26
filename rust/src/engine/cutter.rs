@@ -479,6 +479,9 @@ pub fn run_cut_with_control(
                     width: lp.width,
                     height: lp.height,
                     tiles: lp.tiles_x as u64 * lp.tiles_y as u64,
+                    ox: 0,
+                    oy: 0,
+                    wy: lp.tiles_y,
                 })
                 .collect(),
             (_, Some(mp)) => mp
@@ -492,6 +495,9 @@ pub fn run_cut_with_control(
                         width: (nx as u32).saturating_mul(params.tile_size),
                         height: (ny as u32).saturating_mul(params.tile_size),
                         tiles: nx * ny,
+                        ox: lv.tx0,
+                        oy: lv.ty0,
+                        wy: 1u32 << lv.z.min(30),
                     }
                 })
                 .collect(),
@@ -523,12 +529,8 @@ pub fn run_cut_with_control(
             zmin: min_lv,
             zmax: max_lv,
             tms: params.scheme == Scheme::Tms,
-            levels: summary.levels.iter().map(|l| writer::ManifestLevel {
-                level: l.level,
-                width: l.width,
-                height: l.height,
-                tiles: l.tiles,
-            }).collect(),
+            // 直接复用带世界偏移的 manifest 级别（summary.levels 无偏移）
+            levels: manifest_levels.clone(),
             overlays_json: params.preview_overlays.clone().unwrap_or_default(),
         };
         if let Err(e) = writer::write_preview_html(&params.output, &pv) {

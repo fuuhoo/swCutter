@@ -33,6 +33,15 @@ pub struct ManifestLevel {
     pub width: u32,
     pub height: u32,
     pub tiles: u64,
+    /// 该级世界列偏移（相对模式恒 0；mercator 为 tx0）
+    #[serde(default)]
+    pub ox: u32,
+    /// 该级世界行偏移（XYZ 语义；相对模式恒 0）
+    #[serde(default)]
+    pub oy: u32,
+    /// 该级全球行数（1<<z；0 表示未知，由前端回退）
+    #[serde(default)]
+    pub wy: u32,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -91,6 +100,7 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
             "z": l.level, "w": l.width, "h": l.height,
             "tx": (l.width as f64 / info.tile_size as f64).ceil() as u64,
             "ty": (l.height as f64 / info.tile_size as f64).ceil() as u64,
+            "ox": l.ox, "oy": l.oy, "wy": l.wy,
         })).collect::<Vec<_>>(),
     });
     let cfg_str =
@@ -174,45 +184,61 @@ function lvlMeta(){
   for(const l of CFG.levels){ if(l.z === Math.min(CFG.zmax, Math.max(CFG.zmin, want))) best = l; }
   return best || CFG.levels[CFG.levels.length-1];
 }
+// 每级的世界网格信息（相对模式 ox=oy=0）
+function lvGrid(L){ return { ox:L.ox||0, oy:L.oy||0, wy:L.wy||Math.pow(2,L.z)||1 }; }
+// 瓦片包围盒（本页虚拟源像素坐标，1 源px = 1 个最高级像素）
+let BBOX = null;
+function tileBBox(){
+  if(BBOX) return BBOX;
+  const L = CFG.levels[0]; if(!L) return {x0:0,y0:0,x1:CFG.w,y1:CFG.h};
+  const f = CFG.t * Math.pow(2, CFG.zmax - L.z);
+  const g = lvGrid(L);
+  return BBOX = { x0:g.ox*f, y0:g.oy*f, x1:(g.ox+L.tx)*f, y1:(g.oy+L.ty)*f };
+}
 function apply(){
   // 清理上一帧
   for(const el of imgs) el.remove(); imgs.length = 0;
-  const L = lvlMeta();
+  const L0 = lvlMeta();
+  const G = lvGrid(L0);
   const vw = map.clientWidth, vh = map.clientHeight;
   // 该级别像素→屏幕
-  const k = scale * Math.pow(2, CFG.zmax - L.z);
+  const k = scale * Math.pow(2, CFG.zmax - L0.z);
   const ts = CFG.t * k;
   tsGuard = ts;
   if(ts < 4){ zoomLabel.textContent = `${(scale*100)|0}%`; return; }
   const left = cx - vw/2/scale, top = cy - vh/2/scale;   // 源坐标视口左上
   const lx0 = Math.max(0, Math.floor(left / CFG.t)), ly0 = Math.max(0, Math.floor(top / CFG.t));
-  const lx1 = Math.min(L.tx-1, Math.floor((left + vw/scale) / CFG.t));
-  const ly1 = Math.min(L.ty-1, Math.floor((top + vh/scale) / CFG.t));
+  const lx1 = Math.min(L0.tx-1, Math.floor((left + vw/scale) / CFG.t));
+  const ly1 = Math.min(L0.ty-1, Math.floor((top + vh/scale) / CFG.t));
   for(let ty=ly0; ty<=ly1; ty++){
     for(let tx=lx0; tx<=lx1; tx++){
-      const dy = CFG.tms ? (L.ty-1-ty) : ty;
-      const key = `${L.z}/${tx}/${dy}`;
+      // 本地格 → 世界格（mercator 绝对编号）；TMS 文件名行翻转基于全球行数
+      const wx = G.ox + tx, wyz = G.oy + ty;
+      const dy = CFG.tms ? (G.wy - 1 - wyz) : wyz;
+      const key = `${L0.z}/${wx}/${dy}`;
       const sx = (tx*CFG.t - left)*scale, sy = (ty*CFG.t - top)*scale;
       let img = new Image();
       img.className='tile';
       img.style.left = sx+'px'; img.style.top = sy+'px';
       img.style.width = (ts+1)+'px'; img.style.height=(ts+1)+'px';
-      img.src = `${L.z}/${tx}/${dy}.png`;
+      img.src = key + '.png';
       // 中断的任务可能缺块：静默移除，避免碎图标与控制台噪音
       img.onerror=()=>img.remove();
       map.appendChild(img); imgs.push(img);
     }
   }
-  drawOverlays(L, left, top, vw, vh, k);
-  zoomLabel.textContent = `${Math.round(scale*100)}% · L${L.z}`;
+  drawOverlays(L0, left, top, vw, vh, k);
+  zoomLabel.textContent = `${Math.round(scale*100)}% · L${L0.z}`;
 }
 function clampCenter(){
-  cx = Math.max(0, Math.min(CFG.w, cx));
-  cy = Math.max(0, Math.min(CFG.h, cy));
+  const b = tileBBox();
+  cx = Math.max(b.x0, Math.min(b.x1, cx));
+  cy = Math.max(b.y0, Math.min(b.y1, cy));
 }
 function fit(){
-  scale = Math.min(map.clientWidth/CFG.w, map.clientHeight/CFG.h);
-  cx=CFG.w/2; cy=CFG.h/2; clampCenter(); apply();
+  const b = tileBBox();                       // 主动定位到瓦片包围盒
+  scale = Math.min(map.clientWidth/(b.x1-b.x0), map.clientHeight/(b.y1-b.y0));
+  cx=(b.x0+b.x1)/2; cy=(b.y0+b.y1)/2; clampCenter(); apply();
 }
 function one(){ scale=1; apply(); }
 function zoomAt(f, mx, my){
@@ -304,6 +330,7 @@ function drawOverlays(L,left,top,vw,vh,k){
   for(const el of ovImgs) el.remove(); ovImgs.length=0;
   curL=L;
   if(tsGuard<4) return;
+  const G = lvGrid(L);
   const lx1e=Math.min(L.tx, Math.floor((left+vw/scale)/CFG.t)+1);
   const ly1e=Math.min(L.ty, Math.floor((top+vh/scale)/CFG.t)+1);
   const lx0=Math.max(0, Math.floor(left/CFG.t)), ly0=Math.max(0, Math.floor(top/CFG.t));
@@ -315,11 +342,12 @@ function drawOverlays(L,left,top,vw,vh,k){
     let tpl=o.tpl.replace(/\{tk\}/g, tkv);
     if(tpl.includes('{tk}')) return; // 无密钥不请求
     const oz=Math.max(o.zmin??0, Math.min(o.zmax??22, L.z));
-    const flip=o.tms? (Math.pow(2,oz)-1):null;
     for(let ty=ly0; ty<ly1e; ty++){
       for(let tx=lx0; tx<lx1e; tx++){
-        const oy=flip!=null? flip-ty : ty;
-        let url=tpl.replace('{z}',oz).replace('{x}',tx).replace('{y}',oy);
+        // 底图用世界编号对齐（与本地瓦片同一网格原点）
+        const wx=G.ox+tx, wyz=G.oy+ty;
+        const oy=o.tms? (Math.pow(2,oz)-1-wyz) : wyz;
+        let url=tpl.replace('{z}',oz).replace('{x}',wx).replace('{y}',oy);
         if(o.subs&&o.subs.length){ url=url.replace('{s}', o.subs[(tx+ty)%o.subs.length]); }
         if(!url || url.startsWith('file:')) continue;
         const img=new Image();
