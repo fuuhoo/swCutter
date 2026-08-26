@@ -203,50 +203,21 @@ fn manager() -> &'static Manager {
     })
 }
 
-// ---------------- 历史持久化 ----------------
+// ---------------- 历史持久化（SQLite） ----------------
 
-/// 历史记录文件：%APPDATA%\swCutter\history.json
-fn history_path() -> Option<PathBuf> {
-    std::env::var("APPDATA").ok().map(|d| {
-        PathBuf::from(d).join("swCutter").join("history.json")
-    })
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct HistoryRec {
-    id: u64,
-    source: String,
-    output: String,
-    tile_size: u32,
-    scheme: Scheme,
-    alpha: AlphaMode,
-    resample: Resample,
-    zmin: Option<u32>,
-    zmax: Option<u32>,
-    status: String,
-    level: u32,
-    tiles_done: u64,
-    total_tiles: u64,
-    bytes_written: u64,
-    elapsed_ms: u64,
-    #[serde(default)]
-    error: Option<String>,
-    #[serde(default)]
-    started_ms: u64,
-    #[serde(default)]
-    finished_ms: u64,
-}
+use super::history_store::{self, Rec as HistoryRec};
 
 fn is_terminal(status: &str) -> bool {
     matches!(status, "done" | "error" | "cancelled")
 }
 
-/// 启动时把 history.json 恢复为只读冷任务（无工作线程）。
+/// 启动时恢复历史为只读冷任务（无工作线程）。
 fn load_history(mgr: &Manager) {
-    let Some(p) = history_path() else { return };
-    let Ok(raw) = std::fs::read_to_string(p) else { return };
-    let Ok(recs) = serde_json::from_str::<Vec<HistoryRec>>(&raw) else { return };
-    if recs.is_empty() { return; }
+    history_store::init();
+    let recs = history_store::load();
+    if recs.is_empty() {
+        return;
+    }
     let mut max_id = 0u64;
     let mut entries = Vec::new();
     for r in recs {
@@ -289,9 +260,8 @@ fn load_history(mgr: &Manager) {
     *mgr.tasks.lock().unwrap() = entries;
 }
 
-/// 把当前全部任务（含冷历史）写回 history.json。
+/// 把当前全部任务（含冷历史）写回 SQLite。
 fn persist(mgr: &Manager) {
-    let Some(p) = history_path() else { return };
     let recs: Vec<HistoryRec> = mgr.tasks.lock().unwrap().iter().map(|e| {
         let snap = e.snap.lock().unwrap().clone();
         HistoryRec {
@@ -315,15 +285,7 @@ fn persist(mgr: &Manager) {
             finished_ms: *e.finished_ms.lock().unwrap(),
         }
     }).collect();
-    if let Ok(json) = serde_json::to_string_pretty(&recs) {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let tmp = p.with_extension("json.tmp");
-        if std::fs::write(&tmp, json).is_ok() {
-            let _ = std::fs::rename(&tmp, &p);
-        }
-    }
+    history_store::save(&recs);
 }
 
 fn default_concurrency() -> u32 {

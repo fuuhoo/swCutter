@@ -137,10 +137,10 @@ impl SourceReader {
         Ok(())
     }
 
-    /// 单遍采样生成预览：每个 chunk 仅解码一次，把采样网格点拷入画布。
-    /// 返回 (ow, oh, rgba8)。对任意条带/瓦片布局都是 O(文件大小) 单遍。
+    /// 单遍采样生成预览：只解码包含采样点的 chunk，把网格点拷入画布。
+    /// 返回 (ow, oh, rgba8)。对超大图（10G+）也只触碰极少数块。
     pub fn preview_sample(&mut self, max_px: u32) -> CoreResult<(u32, u32, Vec<u8>)> {
-        let max_px = max_px.clamp(128, 2048);
+        let max_px = max_px.clamp(96, 1600);
         let (w, h) = (self.width, self.height);
         let scale = ((w.max(h) as f64 / max_px as f64).ceil() as u32).max(1);
         let ow = w.div_ceil(scale);
@@ -155,31 +155,39 @@ impl SourceReader {
                     (ci / self.chunks_across) * self.chunk_h,
                 ),
             };
-            if cox >= w || coy >= h || ci >= self.chunk_count {
+            if cox >= w || coy >= h {
                 continue;
             }
-            // 跳过不含采样点的块
-            let ox0 = cox.div_ceil(scale);
-            let oy0 = coy.div_ceil(scale);
-            if ox0 >= ow || oy0 >= oh {
+            // 该块内是否真的存在采样点（scale 大时绝大多数块被跳过）
+            let ox_lo = cox.div_ceil(scale);
+            let oy_lo = coy.div_ceil(scale);
+            if ox_lo >= ow || oy_lo >= oh {
                 continue;
             }
+            let cw_eff0 = self.chunk_w.min(w.saturating_sub(cox)).max(1);
+            let ch_eff0 = self.chunk_h.min(h.saturating_sub(coy)).max(1);
+            let ox_end = (((cox + cw_eff0 - 1) / scale) + 1).min(ow); // exclusive
+            let oy_end = (((coy + ch_eff0 - 1) / scale) + 1).min(oh);
+            if ox_lo >= ox_end || oy_lo >= oy_end {
+                continue; // 无采样点 → 完全不解码
+            }
+
             self.ensure_chunk(ci)?;
             let (dw, dh) = self.dims[&ci];
             let cw_eff = dw.min(w - cox).max(1);
             let ch_eff = dh.min(h - coy).max(1);
 
-            let ox1 = (((cox + cw_eff - 1) / scale) + 1).min(ow) ; // exclusive
-            let oy1 = (((coy + ch_eff - 1) / scale) + 1).min(oh);
-
             let canvas_c = self.cache.get(&ci).expect("just ensured");
-            for oy in oy0..oy1 {
+            'rows: for oy in oy_lo..oy_end {
                 let sy = oy * scale;
                 if sy < coy || sy >= coy + ch_eff { continue; }
                 let lrow = (sy - coy) as usize;
-                for ox in ox0..ox1 {
+                for ox in ox_lo..ox_end {
                     let sx = ox * scale;
-                    if sx < cox || sx >= cox + cw_eff { continue; }
+                    if sx >= cox + cw_eff {
+                        continue 'rows; // 后续列越出本块（scale 小时可能发生）
+                    }
+                    if sx < cox { continue; }
                     let si = (lrow * cw_eff as usize + (sx - cox) as usize) * 4;
                     let di = (oy as usize * ow as usize + ox as usize) * 4;
                     if si + 3 < canvas_c.rgba.len() && di + 3 < canvas.len() {

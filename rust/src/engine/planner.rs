@@ -21,8 +21,8 @@ pub struct LevelPlan {
     pub scale: f64,
 }
 
-/// 允许超过原始分辨率的最大上采样级数
-pub const MAX_UPSAMPLE: u32 = 4;
+/// 级别硬上限（对齐主流切片工具：0–22 自由设置）
+pub const MAX_LEVEL_CAP: u32 = 22;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PyramidPlan {
@@ -97,8 +97,7 @@ pub fn plan(
     }
 
     let max_level = native_level(image_width, image_height, tile_size);
-    // 先校验请求区间；zmax 允许超出 native 至多 MAX_UPSAMPLE 级（放大输出）
-    let hard_cap = max_level.saturating_add(MAX_UPSAMPLE);
+    // 级别自由设置：[0, MAX_LEVEL_CAP]，zmax 可自由超出 native（放大输出）
     let req_min = min_level_req.unwrap_or(0);
     let req_max = max_level_req.unwrap_or(max_level);
     if req_min > req_max {
@@ -106,8 +105,13 @@ pub fn plan(
             "级别区间无效: [{req_min}, {req_max}]"
         )));
     }
-    let zmin = req_min.min(hard_cap);
-    let zmax = req_max.clamp(zmin, hard_cap);
+    if req_min > MAX_LEVEL_CAP {
+        return Err(CoreError::InvalidInput(format!(
+            "最小级别 {req_min} 超出上限 {MAX_LEVEL_CAP}"
+        )));
+    }
+    let zmin = req_min;
+    let zmax = req_max.min(MAX_LEVEL_CAP).max(zmin);
 
     let mut levels = Vec::new();
     let mut total: u64 = 0;
@@ -116,11 +120,8 @@ pub fn plan(
         let tx = (w + tile_size - 1) / tile_size;
         let ty = (h + tile_size - 1) / tile_size;
         total += tx as u64 * ty as u64;
-        let scale = if level <= max_level {
-            (1u32 << (max_level - level)) as f64
-        } else {
-            1.0 / (1u32 << (level - max_level)) as f64
-        };
+        let exp = max_level as i64 - level as i64; // >0 缩小，<0 放大
+        let scale = 2f64.powi(exp.clamp(-30, 30) as i32);
         levels.push(LevelPlan {
             level,
             width: w,
@@ -179,9 +180,25 @@ mod tests {
             plan(100, 100, 256, Some(3), Some(1)),
             Err(CoreError::InvalidInput(_))
         ));
-        // clamp beyond native+MAX_UPSAMPLE
+        // clamp to hard cap 22
         let p = plan(512, 512, 256, Some(0), Some(99)).unwrap();
-        assert_eq!(p.max_level_requested, 1 + MAX_UPSAMPLE);
+        assert_eq!(p.max_level_requested, MAX_LEVEL_CAP);
+    }
+
+    #[test]
+    fn free_level_range_0_to_22() {
+        // 自由选择：zmin 可 >0，zmax 可到 22
+        let p = plan(4096, 4096, 256, Some(3), Some(22)).unwrap();
+        assert_eq!(p.min_level_requested, 3);
+        assert_eq!(p.max_level_requested, 22);
+        assert_eq!(p.levels.len(), 20);
+        // native = log2(4096/256)=4；L6 = ×4 放大
+        let l6 = p.levels.iter().find(|l| l.level == 6).unwrap();
+        assert_eq!((l6.width, l6.height), (16384, 16384));
+        assert!((l6.scale - 0.25).abs() < 1e-9);
+        // 上采样尺寸受 u32 保护不 panic（L22 = ×2^18）
+        let l22 = p.levels.last().unwrap();
+        assert!(l22.width >= 1 && l22.tiles_x >= 1);
     }
 
     #[test]

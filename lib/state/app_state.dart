@@ -292,14 +292,26 @@ class DraftStore extends ChangeNotifier {
 
   void touch() => notifyListeners();
 
-  Future<void> loadPreview(TaskDraft d, {int maxPx = 1600}) async {
+  /// 渐进式预览：先出低清（秒开），后台再补高清替换。
+  Future<void> loadPreview(TaskDraft d, {int maxPx = 1400}) async {
     d.loadingPreview = true;
     d.previewError = '';
     notifyListeners();
     try {
-      d.previewBytes = await api.makePreview(source: d.source, maxPx: maxPx);
+      // 第一阶段：极低清快速出图（只触碰极少 chunk，10G+ 也 <2s）
+      try {
+        final coarse = await api.makePreview(source: d.source, maxPx: 320);
+        // 用户可能已切换草稿或重入：仅当仍是当前字节时覆盖
+        if (identical(d, active) || drafts.contains(d)) {
+          d.previewBytes = coarse;
+          notifyListeners();
+        }
+      } catch (_) {/* 粗图失败不阻断高清 */}
+      // 第二阶段：高清精修
+      final fine = await api.makePreview(source: d.source, maxPx: maxPx);
+      d.previewBytes = fine;
     } catch (e) {
-      d.previewError = e.toString();
+      if (d.previewBytes == null) d.previewError = e.toString();
     } finally {
       d.loadingPreview = false;
       notifyListeners();

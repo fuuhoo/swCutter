@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/app_state.dart';
+import '../version.dart';
 import 'new_task_page.dart';
 import 'settings_page.dart';
 import 'tasks_page.dart';
@@ -56,6 +57,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                   const SizedBox(height: 8),
                   const Text('swCutter',
                       style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                  Text('v$kAppVersion',
+                      style: TextStyle(
+                          fontSize: 10.5, color: scheme.outline)),
                 ],
               ),
             ),

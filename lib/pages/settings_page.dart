@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/app_state.dart';
+import '../version.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -139,9 +140,9 @@ class SettingsPage extends ConsumerWidget {
               children: [
                 Icon(Icons.info_outline_rounded, size: 17, color: cs.primary),
                 const SizedBox(width: 8),
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'swCutter v0.1 — Flutter + Rust TIFF 金字塔切片工具。'
+                    'swCutter v$kAppVersion — Flutter + Rust TIFF 金字塔切片工具。'
                     '支持 XYZ / TMS 目录、PNG 输出、颜色键透明与浏览器瓦片预览。',
                     style: TextStyle(fontSize: 12.5),
                   ),

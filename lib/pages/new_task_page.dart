@@ -52,9 +52,15 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
         height: info.height,
         maxLevel: info.maxLevel,
       );
-      // 默认输出目录：<源目录>_tiles；或全局默认
-      final dir = Directory(path).parent.path;
-      draft.outputDir = app.defaultOutput.isNotEmpty ? app.defaultOutput : '${dir}_tiles';
+      // 输出目录规则：<默认输出>/<tiff名>；未设置默认目录时用源旁 <tiff名>_tiles
+      final stem = draft.fileName.contains('.')
+          ? draft.fileName.substring(0, draft.fileName.lastIndexOf('.'))
+          : draft.fileName;
+      final srcDir = Directory(path).parent.path;
+      final base = app.defaultOutput.isNotEmpty ? app.defaultOutput : '$srcDir\\';
+      draft.outputDir = base.endsWith('\\') || base.endsWith('/')
+          ? '$base${stem}_tiles'
+          : '$base${Platform.pathSeparator}$stem';
       store.add(draft);
       unawaited(store.loadPreview(draft));
       unawaited(store.refreshEstimates(draft));
@@ -300,9 +306,9 @@ class _FormColumn extends ConsumerWidget {
           RangeSlider(
             values: RangeValues(active.zmin.toDouble(), active.zmax.toDouble()),
             min: 0,
-            // 允许超出原始分辨率最多 +3 级（放大输出）
-            max: (active.maxLevel + 3).toDouble(),
-            divisions: active.maxLevel + 3,
+            // 主流切片工具惯例：0–22 自由设置（可超原始分辨率）
+            max: 22,
+            divisions: 22,
             labels: RangeLabels('Z${active.zmin}', 'Z${active.zmax}'),
             onChanged: (v) {
               active.zmin = v.start.round();
@@ -313,11 +319,12 @@ class _FormColumn extends ConsumerWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Z0（单瓦片全览）',
+              Text('Z0 单瓦片全览',
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
               Text(
-                'Z${active.maxLevel} = 原始分辨率'
-                '${active.zmax > active.maxLevel ? ' · 已超采样至 Z${active.zmax}（放大 ${(1 << (active.zmax - active.maxLevel))}×）' : ' · 可再 +3 级'}',
+                'Z${active.maxLevel}=原始'
+                '${active.zmax > active.maxLevel ? ' · 已放大 ${_pow2(active.zmax - active.maxLevel)}×' : ''}'
+                '${active.zmin > 0 ? ' · 跳过低级' : ''}',
                 style: TextStyle(
                     fontSize: 11,
                     color: active.zmax > active.maxLevel
@@ -450,6 +457,14 @@ class _FormColumn extends ConsumerWidget {
 }
 
 enum _AlphaChoice { keep, threshold, colorKey }
+
+String _pow2(int n) {
+  var v = 1;
+  for (var i = 0; i < n && i < 30; i++) {
+    v *= 2;
+  }
+  return '$v';
+}
 
 extension _AlphaChoiceX on _AlphaChoice {
   static _AlphaChoice of(AlphaMode m) => switch (m) {
