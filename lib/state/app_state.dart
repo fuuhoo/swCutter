@@ -26,6 +26,10 @@ class AppState extends ChangeNotifier {
   int concurrency = 2;
   String defaultOutput = '';
   ThemeMode themeMode = ThemeMode.dark;
+  /// 全局瓦片尺寸
+  int tileSize = 256;
+  /// 全局：跳过全透明瓦片（默认关，与 gdal2tiles 行为一致）
+  bool skipEmpty = false;
 
   bool settingsLoaded = false;
 
@@ -37,6 +41,8 @@ class AppState extends ChangeNotifier {
         concurrency = (j['concurrency'] as num?)?.toInt() ?? 2;
         defaultOutput = (j['defaultOutput'] as String?) ?? '';
         themeMode = ThemeMode.values.asMap()[j['themeMode'] ?? 0] ?? ThemeMode.dark;
+        tileSize = (j['tileSize'] as num?)?.toInt() ?? 256;
+        skipEmpty = (j['skipEmpty'] as bool?) ?? false;
       }
       settingsLoaded = true;
       notifyListeners();
@@ -53,6 +59,8 @@ class AppState extends ChangeNotifier {
         'concurrency': concurrency,
         'defaultOutput': defaultOutput,
         'themeMode': themeMode.index,
+        'tileSize': tileSize,
+        'skipEmpty': skipEmpty,
       }));
     } catch (_) {}
   }
@@ -354,15 +362,17 @@ class DraftStore extends ChangeNotifier {
       // 第一阶段：极低清快速出图（只触碰极少 chunk，10G+ 也 <2s）
       try {
         final coarse = await api.makePreview(source: d.source, maxPx: 320);
+        // 防御性拷贝：脱离 FRB 缓冲，避免底层内存复用导致解码花屏
+        final coarseCopy = Uint8List.fromList(coarse);
         // 用户可能已切换草稿或重入：仅当仍是当前字节时覆盖
         if (identical(d, active) || drafts.contains(d)) {
-          d.previewBytes = coarse;
+          d.previewBytes = coarseCopy;
           notifyListeners();
         }
       } catch (_) {/* 粗图失败不阻断高清 */}
       // 第二阶段：高清精修
       final fine = await api.makePreview(source: d.source, maxPx: maxPx);
-      d.previewBytes = fine;
+      d.previewBytes = Uint8List.fromList(fine);
     } catch (e) {
       if (d.previewBytes == null) d.previewError = e.toString();
     } finally {

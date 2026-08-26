@@ -136,6 +136,57 @@ class SettingsPage extends ConsumerWidget {
         Card(
           child: Padding(
             padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Icon(Icons.tune_rounded, size: 17, color: cs.primary),
+                  const SizedBox(width: 6),
+                  const Text('切片默认参数（全局）',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                ]),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    const Text('瓦片尺寸',
+                        style: TextStyle(fontSize: 13)),
+                    const Spacer(),
+                    SegmentedButton<int>(
+                      segments: const [
+                        ButtonSegment(value: 256, label: Text('256')),
+                        ButtonSegment(value: 512, label: Text('512')),
+                      ],
+                      selected: {app.tileSize},
+                      onSelectionChanged: (s) {
+                        ref.read(appProvider).tileSize = s.first;
+                        ref.read(appProvider).saveSettings();
+                      },
+                    ),
+                  ],
+                ),
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('跳过全透明瓦片',
+                      style: TextStyle(fontSize: 13)),
+                  subtitle: const Text(
+                      '关闭时与 gdal2tiles 一致：空白区域也输出透明 PNG（默认关闭）',
+                      style: TextStyle(fontSize: 11)),
+                  value: app.skipEmpty,
+                  onChanged: (v) {
+                    ref.read(appProvider).skipEmpty = v;
+                    ref.read(appProvider).saveSettings();
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
             child: Row(
               children: [
                 Icon(Icons.info_outline_rounded, size: 17, color: cs.primary),
@@ -143,7 +194,7 @@ class SettingsPage extends ConsumerWidget {
                 Expanded(
                   child: Text(
                     'swCutter v$kAppVersion — Flutter + Rust TIFF 金字塔切片工具。'
-                    '支持 XYZ / TMS 目录、PNG 输出、颜色键透明与浏览器瓦片预览。',
+                    'GDAL 绝对级别 · XYZ/TMS 目录 · PNG 输出 · 颜色键透明与浏览器瓦片预览。',
                     style: TextStyle(fontSize: 12.5),
                   ),
                 ),

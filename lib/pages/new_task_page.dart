@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data' show Uint8List;
+import 'dart:typed_data';
 
-import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,19 +21,18 @@ class NewTaskPage extends ConsumerStatefulWidget {
 }
 
 class _NewTaskPageState extends ConsumerState<NewTaskPage> {
-  bool _dragging = false;
-
-  Future<void> _pickFiles() async {
+  /// 单文件选择：替换当前草稿（新建任务页始终只处理一个输入）。
+  Future<void> _pickSource() async {
     final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['tif', 'tiff'],
-      // 多选仍需此参数（v12 标记弃用但为多选唯一途径）
-      // ignore: deprecated_member_use
-      allowMultiple: true,
     );
     for (final f in files) {
       final p = f.path;
-      if (p != null && p.isNotEmpty) await _addSource(p);
+      if (p != null && p.isNotEmpty) {
+        await _addSource(p);
+        break;
+      }
     }
   }
 
@@ -52,6 +50,11 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
         height: info.height,
         maxLevel: info.maxLevel,
       );
+      // 仅保留 GDAL 绝对级别模式
+      draft.mercator = true;
+      // 全局设置同步
+      draft.tileSize = app.tileSize;
+      draft.skipEmpty = app.skipEmpty;
       // 输出目录规则：<默认输出>/<tiff名>；未设置默认目录时用源旁 <tiff名>_tiles
       final stem = draft.fileName.contains('.')
           ? draft.fileName.substring(0, draft.fileName.lastIndexOf('.'))
@@ -59,8 +62,9 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
       final srcDir = Directory(path).parent.path;
       final base = app.defaultOutput.isNotEmpty ? app.defaultOutput : '$srcDir\\';
       draft.outputDir = base.endsWith('\\') || base.endsWith('/')
-          ? '$base${stem}_tiles'
+          ? '$base$stem'
           : '$base${Platform.pathSeparator}$stem';
+      store.drafts.clear();
       store.add(draft);
       unawaited(store.loadPreview(draft));
       unawaited(store.refreshEstimates(draft));
@@ -90,61 +94,47 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
                   ?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: 14),
           Expanded(
-            child: active == null
-                ? _EmptyDropZone(
-                    dragging: _dragging,
-                    onDragEnter: () => setState(() => _dragging = true),
-                    onDragExit: () => setState(() => _dragging = false),
-                    onFilesDropped: (files) async {
-                      setState(() => _dragging = false);
-                      for (final f in files) {
-                        final p = f.toLowerCase();
-                        if (p.endsWith('.tif') || p.endsWith('.tiff')) {
-                          await _addSource(f);
-                        }
-                      }
-                    },
-                    onPick: _pickFiles,
-                  )
-                : Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // 左：文件 chips + 表单
-                      SizedBox(
-                        width: 430,
-                        child: _FormColumn(active: active),
-                      ),
-                      const SizedBox(width: 16),
-                      // 右：预览
-                      Expanded(child: _PreviewPane(draft: active)),
-                    ],
-                  ),
-          ),
-          if (active != null) ...[
-            const Divider(),
-            Row(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.info_outline_rounded, size: 15, color: cs.outline),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    '输出格式 PNG · 输出目录将自动创建层级文件夹与 preview.html',
-                    style: TextStyle(fontSize: 12, color: cs.outline),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                // 左：表单（无草稿时显示仅含输入选择的轻量版）
+                SizedBox(
+                  width: 430,
+                  child: active == null
+                      ? _NoSourceForm(onPickSource: _pickSource)
+                      : _FormColumn(active: active),
                 ),
-                const SizedBox(width: 12),
-                FilledButton.icon(
-                  onPressed: () => _startAll(),
-                  icon: const Icon(Icons.play_arrow_rounded),
-                  label: Text(drafts.drafts.length > 1
-                      ? '开始全部（${drafts.drafts.length}）'
-                      : '开始切片'),
+                const SizedBox(width: 16),
+                // 右：预览（未选文件时给引导占位）
+                Expanded(
+                  child: active == null
+                      ? _NoSourceHint(onPick: _pickSource)
+                      : _PreviewPane(draft: active),
                 ),
               ],
             ),
-          ],
+          ),
+          const Divider(),
+          Row(
+            children: [
+              Icon(Icons.info_outline_rounded, size: 15, color: cs.outline),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'GDAL 绝对级别 · PNG 输出 · 输出目录自动创建层级与 preview.html',
+                  style: TextStyle(fontSize: 12, color: cs.outline),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                onPressed: active == null ? null : () => _startAll(),
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: const Text('开始切片'),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -194,6 +184,9 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
     final failures = <String>[];
     for (final d in List<TaskDraft>.from(store.drafts)) {
       try {
+        // 全局设置同步（瓦片尺寸/跳过透明在「设置」页维护）
+        d.tileSize = app.tileSize;
+        d.skipEmpty = app.skipEmpty;
         final id = await store.startDraft(d,
             outputOverride:
                 app.defaultOutput.isNotEmpty ? d.outputDir : null);
@@ -220,67 +213,57 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
 
 // ---------------- 空态拖拽区 ----------------
 
-class _EmptyDropZone extends StatelessWidget {
-  final bool dragging;
-  final VoidCallback onDragEnter;
-  final VoidCallback onDragExit;
-  final ValueChanged<List<String>> onFilesDropped;
-  final VoidCallback onPick;
+/// 未选择文件时的左侧轻量表单：只有「输入」卡。
+class _NoSourceForm extends StatelessWidget {
+  final Future<void> Function() onPickSource;
+  const _NoSourceForm({required this.onPickSource});
 
-  const _EmptyDropZone({
-    required this.dragging,
-    required this.onDragEnter,
-    required this.onDragExit,
-    required this.onFilesDropped,
-    required this.onPick,
-  });
+  @override
+  Widget build(BuildContext context) {
+    return ListView(shrinkWrap: true, children: [
+      _SectionCard(title: '输入', icon: Icons.file_open_rounded, children: [
+        TextFormField(
+          initialValue: '',
+          readOnly: true,
+          style: const TextStyle(fontSize: 12.5),
+          decoration: InputDecoration(
+            labelText: '输入 TIFF 文件',
+            hintText: '尚未选择文件',
+            prefixIcon: const Icon(Icons.image_rounded),
+            suffixIcon: IconButton(
+              tooltip: '选择 TIFF 文件',
+              icon: const Icon(Icons.file_open_rounded),
+              onPressed: onPickSource,
+            ),
+          ),
+        ),
+      ]),
+      const SizedBox(height: 10),
+    ]);
+  }
+}
+
+/// 未选择文件时的右侧引导。
+class _NoSourceHint extends StatelessWidget {
+  final Future<void> Function() onPick;
+  const _NoSourceHint({required this.onPick});
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Card(
-      child: DropTarget(
-        onDragEntered: (_) => onDragEnter(),
-        onDragExited: (_) => onDragExit(),
-        onDragDone: (details) =>
-            onFilesDropped(details.files.map((f) => f.path).toList()),
-        child: Container(
-          width: double.infinity,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: dragging ? cs.primary : cs.outlineVariant.withValues(alpha: 0.5),
-              width: dragging ? 2 : 1.4,
-            ),
-          ),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AnimatedScale(
-                  scale: dragging ? 1.12 : 1,
-                  duration: const Duration(milliseconds: 180),
-                  child: Icon(Icons.upload_file_rounded,
-                      size: 64,
-                      color: dragging ? cs.primary : cs.outline),
-                ),
-                const SizedBox(height: 14),
-                Text(dragging ? '松开即可添加' : '拖入 .tif / .tiff 文件',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 6),
-                Text('支持同时选择多个文件并行切片',
-                    style: TextStyle(color: cs.outline, fontSize: 12)),
-                const SizedBox(height: 18),
-                FilledButton.icon(
-                  onPressed: onPick,
-                  icon: const Icon(Icons.file_open_rounded),
-                  label: const Text('选择 TIFF 文件'),
-                ),
-              ],
-            ),
-          ),
+    return Center(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.image_search_rounded, size: 64, color: cs.outline),
+        const SizedBox(height: 12),
+        Text('先在左侧选择一个 TIFF 文件',
+            style: TextStyle(color: cs.onSurfaceVariant)),
+        const SizedBox(height: 14),
+        FilledButton.tonalIcon(
+          onPressed: onPick,
+          icon: const Icon(Icons.file_open_rounded),
+          label: const Text('选择输入文件'),
         ),
-      ),
+      ]),
     );
   }
 }
@@ -297,23 +280,33 @@ class _FormColumn extends ConsumerWidget {
     return ListView(
       shrinkWrap: true,
       children: [
-        // 文件 chips
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (var i = 0; i < store.drafts.length; i++)
-              InputChip(
-                selected: i == store.activeIndex,
-                label: Text(store.drafts[i].fileName,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-                onPressed: () => store.select(i),
-                onDeleted: () => store.removeAt(i),
-                avatar: Icon(Icons.image_rounded,
-                    size: 15, color: Theme.of(context).colorScheme.primary),
-              ),
-          ],
-        ),
+        // ---- 输入（与输出同款：文本框 + 选择按钮）----
+        _SectionCard(title: '输入', icon: Icons.file_open_rounded, children: [
+          TextFormField(
+            key: ValueKey(active.source),
+            initialValue: active.source,
+            readOnly: true,
+            style: const TextStyle(fontSize: 12.5),
+            decoration: InputDecoration(
+              labelText: '输入 TIFF 文件',
+              prefixIcon: const Icon(Icons.image_rounded),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(children: [
+            Icon(Icons.photo_size_select_large_rounded,
+                size: 14, color: Theme.of(context).colorScheme.outline),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                  '${active.width} × ${active.height} px'
+                  '${active.nativeZoom != null ? ' · 原始≈Z${active.nativeZoom}' : ''}',
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      color: Theme.of(context).colorScheme.outline)),
+            ),
+          ]),
+        ]),
         const SizedBox(height: 10),
 
         _SectionCard(title: '输出', icon: Icons.output_rounded, children: [
@@ -338,19 +331,6 @@ class _FormColumn extends ConsumerWidget {
             ),
             onChanged: (v) => active.outputDir = v,
           ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('跳过全透明瓦片',
-                style: TextStyle(fontSize: 13)),
-            subtitle: const Text('关闭时与 gdal2tiles 一致：空白区域也输出透明 PNG',
-                style: TextStyle(fontSize: 11)),
-            value: active.skipEmpty,
-            onChanged: (v) {
-              active.skipEmpty = v;
-              store.touch();
-            },
-          ),
           if (active.estimateError.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -359,24 +339,6 @@ class _FormColumn extends ConsumerWidget {
                       fontSize: 11.5,
                       color: Theme.of(context).colorScheme.error)),
             ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const Text('瓦片尺寸'),
-              const Spacer(),
-              SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment(value: 256, label: Text('256')),
-                  ButtonSegment(value: 512, label: Text('512')),
-                ],
-                selected: {active.tileSize},
-                onSelectionChanged: (s) {
-                  active.tileSize = s.first;
-                  store.refreshEstimates(active);
-                },
-              ),
-            ],
-          ),
         ]),
 
         _SectionCard(title: '级别范围', icon: Icons.layers_rounded, children: [
@@ -384,24 +346,20 @@ class _FormColumn extends ConsumerWidget {
             children: [
               const Text('级别语义'),
               const Spacer(),
-              SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(
-                      value: false,
-                      label: Text('自由(0–22)'),
-                      tooltip: '相对原始分辨率，可超采样放大'),
-                  ButtonSegment(
-                      value: true,
-                      label: Text('GDAL 绝对'),
-                      tooltip:
-                          'Web-Mercator 全球网格绝对缩放级，与 gdal2tiles 数量一致；需 GeoTIFF，超出原始自动截断'),
-                ],
-                selected: {active.mercator},
-                onSelectionChanged: (s) {
-                  active.mercator = s.first;
-                  if (active.mercator) active.zmax = active.zmax.clamp(0, 22);
-                  store.refreshEstimates(active);
-                },
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text('GDAL 绝对 · Web-Mercator',
+                    style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onPrimaryContainer)),
               ),
             ],
           ),
@@ -425,18 +383,10 @@ class _FormColumn extends ConsumerWidget {
               Text('Z0 单瓦片全览',
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
               Text(
-                active.mercator
-                    ? 'GDAL 模式 · 原始≈Z${active.nativeZoom ?? '?'}'
-                        '${active.zmax > (active.nativeZoom ?? 22) ? ' · 超出截断至 Z${active.nativeZoom ?? '?'}' : ''}'
-                        '${active.zmin > 0 ? ' · 跳过低级' : ''}'
-                    : 'Z${active.maxLevel}=原始'
-                        '${active.zmax > active.maxLevel ? ' · 已放大 ${_pow2(active.zmax - active.maxLevel)}×' : ''}'
-                        '${active.zmin > 0 ? ' · 跳过低级' : ''}',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: !active.mercator && active.zmax > active.maxLevel
-                        ? Theme.of(context).colorScheme.primary
-                        : Colors.grey.shade500),
+                '原始≈Z${active.nativeZoom ?? '?'}'
+                '${active.zmax > (active.nativeZoom ?? 22) ? ' · 超出截断至 Z${active.nativeZoom ?? '?'}' : ''}'
+                '${active.zmin > 0 ? ' · 跳过低级' : ''}',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
               ),
             ],
           ),
@@ -565,14 +515,6 @@ class _FormColumn extends ConsumerWidget {
 
 enum _AlphaChoice { keep, threshold, colorKey }
 
-String _pow2(int n) {
-  var v = 1;
-  for (var i = 0; i < n && i < 30; i++) {
-    v *= 2;
-  }
-  return '$v';
-}
-
 extension _AlphaChoiceX on _AlphaChoice {
   static _AlphaChoice of(AlphaMode m) => switch (m) {
         AlphaMode_Keep() => _AlphaChoice.keep,
@@ -652,13 +594,20 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
   Color? _pickColor;
   Timer? _markTimer;
 
-  /// 预览未解码前的占位尺寸（与 Rust makePreview 同公式），避免 1×1 不可见。
-  Size _expectedSize(TaskDraft d) {
-    final long = (d.width > d.height ? d.width : d.height).clamp(1, 1 << 30);
-    final scale = (long / 2048).ceil().clamp(1, 1 << 20);
-    return Size((d.width / scale).ceilToDouble(),
-        (d.height / scale).ceilToDouble());
+  /// 从 PNG 字节直接解析 IHDR 尺寸（字节 16..24，大端宽高），
+  /// 避免用与实际分辨率不符的占位公式导致布局错乱/拉伸花屏。
+  Size _pngSize(Uint8List b) {
+    if (b.length >= 24) {
+      final rd = ByteData.sublistView(b, 16, 24);
+      final w = rd.getUint32(0, Endian.big);
+      final h = rd.getUint32(4, Endian.big);
+      if (w > 0 && h > 0) return Size(w.toDouble(), h.toDouble());
+    }
+    return const Size(1400, 1100);
   }
+
+  Size _expectedSize(TaskDraft d) =>
+      d.previewBytes != null ? _pngSize(d.previewBytes!) : const Size(320, 260);
 
   void _scheduleDecode() {
     final bytes = widget.draft.previewBytes;
