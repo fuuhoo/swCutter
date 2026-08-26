@@ -358,10 +358,8 @@ pub fn sample_pixel(source: String, x: i64, y: i64) -> anyhow::Result<Vec<u8>> {
 }
 
 pub fn make_preview(source: String, max_px: u32) -> anyhow::Result<Vec<u8>> {
-    let mut reader = SourceReader::open(Path::new(&source))?;
-    let (ow, oh, canvas) = reader.preview_sample(max_px)?;
-    let (w, h) = (reader.width, reader.height);
-    let _ = (w, h);
+    let (ow, oh, canvas) =
+        crate::engine::source::preview_sample_parallel(Path::new(&source), max_px)?;
 
     // 轻度平滑后编码为 PNG
     let img =

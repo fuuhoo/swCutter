@@ -170,8 +170,11 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
     final failures = <String>[];
     for (final d in List<TaskDraft>.from(store.drafts)) {
       try {
-        await store.startDraft(d, outputOverride:
-            app.defaultOutput.isNotEmpty ? d.outputDir : null);
+        final id = await store.startDraft(d,
+            outputOverride:
+                app.defaultOutput.isNotEmpty ? d.outputDir : null);
+        // 本地立即登记，任务中心即时可见（后续事件按此 id 更新）
+        app.addLocalTask(id, d.toConfig(d.outputDir));
       } catch (e) {
         failures.add('${d.fileName}: $e');
       }
@@ -291,9 +294,24 @@ class _FormColumn extends ConsumerWidget {
 
         _SectionCard(title: '输出', icon: Icons.output_rounded, children: [
           TextFormField(
+            key: ValueKey(active.outputDir),
             initialValue: active.outputDir,
-            decoration: const InputDecoration(
-                labelText: '输出目录', prefixIcon: Icon(Icons.folder_rounded)),
+            decoration: InputDecoration(
+              labelText: '输出目录',
+              prefixIcon: const Icon(Icons.folder_rounded),
+              suffixIcon: IconButton(
+                tooltip: '选择文件夹',
+                icon: const Icon(Icons.folder_open_rounded),
+                onPressed: () async {
+                  final picked = await FilePicker.getDirectoryPath(
+                      dialogTitle: '选择输出目录');
+                  if (picked != null && picked.isNotEmpty) {
+                    active.outputDir = picked;
+                    store.touch();
+                  }
+                },
+              ),
+            ),
             onChanged: (v) => active.outputDir = v,
           ),
           const SizedBox(height: 8),

@@ -81,7 +81,11 @@ class AppState extends ChangeNotifier {
   void _onEvent(api.TaskEvent ev) {
     final id = ev.taskId.toInt();
     final idx = tasks.indexWhere((t) => t.id.toInt() == id);
-    if (idx == -1) return;
+    if (idx == -1) {
+      // 未知任务事件（如冷启动竞态）：整表刷新兜底
+      refreshTasks();
+      return;
+    }
     final k = ev.kind;
     if (k is api.TaskEventKind_StatusChanged) {
       tasks[idx] = _copyWith(tasks[idx], status: k.status);
@@ -156,6 +160,46 @@ class AppState extends ChangeNotifier {
       finishedAtMs: finishedAtMs ?? t.finishedAtMs,
       error: error ?? t.error,
     );
+  }
+
+  /// 本地立即登记新任务（不等事件），保证任务中心实时可见。
+  void addLocalTask(int id, api.TaskConfig cfg) {
+    if (tasks.any((t) => t.id.toInt() == id)) return;
+    tasks.insert(
+      0,
+      api.TaskDto(
+        id: BigInt.from(id),
+        source: cfg.source,
+        output: cfg.output,
+        tileSize: cfg.tileSize,
+        scheme: cfg.scheme,
+        alpha: cfg.alpha,
+        resample: cfg.resample,
+        zmin: cfg.zmin,
+        zmax: cfg.zmax,
+        status: 'queued',
+        level: 0,
+        tilesDone: BigInt.zero,
+        totalTiles: BigInt.zero,
+        bytesWritten: BigInt.zero,
+        elapsedMs: BigInt.zero,
+        startedAtMs: BigInt.zero,
+        finishedAtMs: BigInt.zero,
+        error: null,
+      ),
+    );
+    notifyListeners();
+  }
+
+  /// 从 Rust 端全量刷新任务列表。
+  Future<void> refreshTasks() async {
+    try {
+      final list = await api.listTasks();
+      tasks
+        ..clear()
+        ..addAll(list);
+      notifyListeners();
+    } catch (_) {}
   }
 
   void _tick() {

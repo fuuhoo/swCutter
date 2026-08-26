@@ -137,66 +137,43 @@ impl SourceReader {
         Ok(())
     }
 
-    /// 单遍采样生成预览：只解码包含采样点的 chunk，把网格点拷入画布。
-    /// 返回 (ow, oh, rgba8)。对超大图（10G+）也只触碰极少数块。
-    pub fn preview_sample(&mut self, max_px: u32) -> CoreResult<(u32, u32, Vec<u8>)> {
+    /// 预览计划 + 含采样点的 chunk 索引集合。
+    pub fn preview_plan(&self, max_px: u32) -> ((u32, u32, u32), Vec<u32>) {
         let max_px = max_px.clamp(96, 1600);
         let (w, h) = (self.width, self.height);
         let scale = ((w.max(h) as f64 / max_px as f64).ceil() as u32).max(1);
         let ow = w.div_ceil(scale);
         let oh = h.div_ceil(scale);
-        let mut canvas = vec![0u8; ow as usize * oh as usize * 4];
-
+        let mut needed = Vec::new();
         for ci in 0..self.chunk_count {
-            let (cox, coy) = match self.chunk_type {
-                ChunkType::Strip => (0u32, ci * self.chunk_h),
-                ChunkType::Tile => (
-                    (ci % self.chunks_across) * self.chunk_w,
-                    (ci / self.chunks_across) * self.chunk_h,
-                ),
-            };
+            let (cox, coy) = self.chunk_origin(ci);
             if cox >= w || coy >= h {
                 continue;
             }
-            // 该块内是否真的存在采样点（scale 大时绝大多数块被跳过）
             let ox_lo = cox.div_ceil(scale);
             let oy_lo = coy.div_ceil(scale);
             if ox_lo >= ow || oy_lo >= oh {
                 continue;
             }
-            let cw_eff0 = self.chunk_w.min(w.saturating_sub(cox)).max(1);
-            let ch_eff0 = self.chunk_h.min(h.saturating_sub(coy)).max(1);
-            let ox_end = (((cox + cw_eff0 - 1) / scale) + 1).min(ow); // exclusive
-            let oy_end = (((coy + ch_eff0 - 1) / scale) + 1).min(oh);
-            if ox_lo >= ox_end || oy_lo >= oy_end {
-                continue; // 无采样点 → 完全不解码
-            }
-
-            self.ensure_chunk(ci)?;
-            let (dw, dh) = self.dims[&ci];
-            let cw_eff = dw.min(w - cox).max(1);
-            let ch_eff = dh.min(h - coy).max(1);
-
-            let canvas_c = self.cache.get(&ci).expect("just ensured");
-            'rows: for oy in oy_lo..oy_end {
-                let sy = oy * scale;
-                if sy < coy || sy >= coy + ch_eff { continue; }
-                let lrow = (sy - coy) as usize;
-                for ox in ox_lo..ox_end {
-                    let sx = ox * scale;
-                    if sx >= cox + cw_eff {
-                        continue 'rows; // 后续列越出本块（scale 小时可能发生）
-                    }
-                    if sx < cox { continue; }
-                    let si = (lrow * cw_eff as usize + (sx - cox) as usize) * 4;
-                    let di = (oy as usize * ow as usize + ox as usize) * 4;
-                    if si + 3 < canvas_c.rgba.len() && di + 3 < canvas.len() {
-                        canvas[di..di + 4].copy_from_slice(&canvas_c.rgba[si..si + 4]);
-                    }
-                }
+            let cw_eff = self.chunk_w.min(w.saturating_sub(cox)).max(1);
+            let ch_eff = self.chunk_h.min(h.saturating_sub(coy)).max(1);
+            let ox_end = (((cox + cw_eff - 1) / scale) + 1).min(ow);
+            let oy_end = (((coy + ch_eff - 1) / scale) + 1).min(oh);
+            if ox_lo < ox_end && oy_lo < oy_end {
+                needed.push(ci);
             }
         }
-        Ok((ow, oh, canvas))
+        ((ow, oh, scale), needed)
+    }
+
+    fn chunk_origin(&self, ci: u32) -> (u32, u32) {
+        match self.chunk_type {
+            ChunkType::Strip => (0u32, ci * self.chunk_h),
+            ChunkType::Tile => (
+                (ci % self.chunks_across) * self.chunk_w,
+                (ci / self.chunks_across) * self.chunk_h,
+            ),
+        }
     }
 
     /// 读取源矩形区域为 RGBA8 行主序缓冲（越界区域填 0）。
@@ -260,6 +237,146 @@ impl SourceReader {
         }
         Ok(out)
     }
+}
+
+/// 几何元数据快照（供并行线程使用，不依赖 SourceReader）。
+#[derive(Clone, Copy)]
+struct Geo {
+    w: u32,
+    h: u32,
+    chunk_type: ChunkType,
+    chunk_w: u32,
+    chunk_h: u32,
+    chunks_across: u32,
+    scale: u32,
+    ow: u32,
+    oh: u32,
+}
+
+impl Geo {
+    fn origin(&self, ci: u32) -> (u32, u32) {
+        match self.chunk_type {
+            ChunkType::Strip => (0u32, ci * self.chunk_h),
+            ChunkType::Tile => (
+                (ci % self.chunks_across) * self.chunk_w,
+                (ci / self.chunks_across) * self.chunk_h,
+            ),
+        }
+    }
+}
+
+thread_local! {
+    static PREVIEW_DECODER: std::cell::RefCell<Option<(PathBuf, ColorType, Geo, Decoder<File>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 并行预览采样：多线程各持独立解码器，只解码含采样点的块。
+/// 墙钟时间约等于「解码总量 / 核数」，对标系统看图工具的多核解码。
+pub fn preview_sample_parallel(path: &Path, max_px: u32) -> CoreResult<(u32, u32, Vec<u8>)> {
+    let probe = SourceReader::open(path)?;
+    let geo = Geo {
+        w: probe.width,
+        h: probe.height,
+        chunk_type: probe.chunk_type,
+        chunk_w: probe.chunk_w,
+        chunk_h: probe.chunk_h,
+        chunks_across: probe.chunks_across,
+        scale: 0,
+        ow: 0,
+        oh: 0,
+    };
+    let ((ow, oh, scale), needed) = probe.preview_plan(max_px);
+    drop(probe);
+    let geo = Geo { scale, ow, oh, ..geo };
+
+    let mut canvas = vec![0u8; ow as usize * oh as usize * 4];
+    let path_buf = path.to_path_buf();
+
+    // 每个块独立解码并产出 (目标偏移, 像素) 列表，最后统一写入（区域互不相交）
+    let results: Vec<Vec<(usize, [u8; 4])>> = {
+        use rayon::prelude::*;
+        needed
+            .into_par_iter()
+            .map(|ci| {
+                PREVIEW_DECODER.with(|cell| {
+                    let mut slot = cell.borrow_mut();
+                    let need_reopen = match slot.as_ref() {
+                        Some((p, _, _, _)) => p != &path_buf,
+                        None => true,
+                    };
+                    if need_reopen {
+                        let file =
+                            File::open(path).map_err(|e| io_err(path.display().to_string(), e))?;
+                        let mut d = Decoder::new(file)?;
+                        let ct = d.colortype()?;
+                        *slot = Some((path_buf.clone(), ct, geo, d));
+                    }
+                    let (_, ct, g, d) = slot.as_mut().expect("decoder prepared");
+                    decode_chunk_cells(d, *ct, *g, ci)
+                })
+                .unwrap_or_default()
+            })
+            .collect()
+    };
+
+    // 写入画布：偏移互不相交，顺序无关
+    for cells in results {
+        for (dst, px) in cells {
+            let e = dst + 4;
+            if e <= canvas.len() {
+                canvas[dst..e].copy_from_slice(&px);
+            }
+        }
+    }
+    Ok((ow, oh, canvas))
+}
+
+/// 解码单个 chunk，返回其覆盖的采样点 (canvas 偏移, RGBA)。
+fn decode_chunk_cells(
+    d: &mut Decoder<File>,
+    ct: ColorType,
+    g: Geo,
+    ci: u32,
+) -> CoreResult<Vec<(usize, [u8; 4])>> {
+    let (cox, coy) = g.origin(ci);
+    if cox >= g.w || coy >= g.h {
+        return Ok(vec![]);
+    }
+    let (dw, dh) = d.chunk_data_dimensions(ci);
+    let res = d.read_chunk(ci)?;
+    let raw8 = crate::engine::meta::result_to_u8(&res)
+        .ok_or_else(|| CoreError::Unsupported("64 位样本".into()))?;
+    let rgba = convert_to_rgba(&raw8, ct, dw as usize, dh as usize)?;
+
+    let cw_eff = dw.min(g.w - cox).max(1);
+    let ch_eff = dh.min(g.h - coy).max(1);
+
+    let ox_lo = cox.div_ceil(g.scale);
+    let oy_lo = coy.div_ceil(g.scale);
+    let ox_end = (((cox + cw_eff - 1) / g.scale) + 1).min(g.ow);
+    let oy_end = (((coy + ch_eff - 1) / g.scale) + 1).min(g.oh);
+
+    let mut out = Vec::new();
+    for oy in oy_lo..oy_end {
+        let sy = oy * g.scale;
+        if sy < coy || sy >= coy + ch_eff {
+            continue;
+        }
+        let lrow = (sy - coy) as usize;
+        for ox in ox_lo..ox_end {
+            let sx = ox * g.scale;
+            if sx >= cox + cw_eff {
+                break;
+            }
+            let si = (lrow * cw_eff as usize + (sx - cox) as usize) * 4;
+            if si + 3 >= rgba.len() {
+                continue;
+            }
+            let di = (oy as usize * g.ow as usize + ox as usize) * 4;
+            out.push((di, [rgba[si], rgba[si + 1], rgba[si + 2], rgba[si + 3]]));
+        }
+    }
+    Ok(out)
 }
 
 /// 将单 chunk 的原始 u8 数据转为 RGBA8。

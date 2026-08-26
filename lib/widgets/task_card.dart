@@ -217,22 +217,25 @@ class TaskCard extends StatelessWidget {
                     label: const Text('取消'),
                   ),
                 ],
-                // 打开目录：除排队外任何状态都可用
+                // 图标按钮行：打开文件夹（非排队可用）+ 浏览器预览（完成后）
                 if (t.status != 'queued') ...[
-                  if (running || t.status == 'paused') const SizedBox(width: 8),
-                  OutlinedButton.icon(
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: '打开文件夹',
                     onPressed: onOpenFolder,
-                    icon: const Icon(Icons.folder_open_rounded, size: 16),
-                    label: const Text('打开文件夹'),
+                    style: IconButton.styleFrom(
+                      backgroundColor:
+                          cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                    ),
+                    icon: const Icon(Icons.folder_open_rounded, size: 19),
                   ),
                 ],
-                // 浏览器预览：仅成功完成
                 if (t.status == 'done') ...[
                   const SizedBox(width: 8),
-                  FilledButton.icon(
+                  IconButton.filledTonal(
+                    tooltip: '浏览器预览',
                     onPressed: onPreview,
-                    icon: const Icon(Icons.public_rounded, size: 16),
-                    label: const Text('浏览器预览'),
+                    icon: const Icon(Icons.public_rounded, size: 19),
                   ),
                 ],
                 const Spacer(),
