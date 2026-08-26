@@ -66,7 +66,9 @@ fn level_range(bounds: [f64; 4], z: u32, tile: u32) -> MercLevel {
     }
 }
 
-/// 规划 mercator 金字塔。req_max > native 时截断到 native（返回值中体现）。
+/// 规划 mercator 金字塔。
+/// 对齐 gdal2tiles：用户显式指定的级别范围**不截断到 native**，
+/// 超出 native 的级别按放大渲染（与 -z 1-22 请求超出时行为一致）。
 pub fn plan(
     bounds3857: [f64; 4],
     sx_m: f64,
@@ -76,8 +78,8 @@ pub fn plan(
     max_total: u64,
 ) -> CoreResult<MercPlan> {
     let nz = zoom_for_pixel_size(sx_m.abs());
-    let zmin = req_min.unwrap_or(0).min(nz);
-    let zmax = req_max.unwrap_or(nz).min(nz).max(zmin);
+    let zmin = req_min.unwrap_or(0);
+    let zmax = req_max.unwrap_or(nz).max(zmin);
 
     let mut levels = Vec::new();
     let mut total: u64 = 0;
@@ -135,11 +137,17 @@ mod tests {
     }
 
     #[test]
-    fn requested_max_clamped_to_native() {
+    fn honors_requested_range_beyond_native() {
+        // 对齐 gdal2tiles：显式指定范围不截断；超出 native 的级别继续 ×4 放大
         let b = [12900000.0, 4740000.0, 12960000.0, 4800000.0];
-        let sx = 0.2985821417; // ≈ z18 分辨率
-        let p = plan(b, sx, 256, Some(1), Some(22), u64::MAX).unwrap();
-        assert!(p.native_zoom <= 19);
-        assert_eq!(p.levels.last().unwrap().z, p.native_zoom);
+        let sx = 0.6; // 介于 z17(1.19) 与 z18(0.597) → native 17
+        let p = plan(b, sx, 256, Some(1), Some(20), u64::MAX).unwrap();
+        assert_eq!(p.levels.first().unwrap().z, 1);
+        assert_eq!(p.levels.last().unwrap().z, 20);
+        assert_eq!(p.native_zoom, 17);
+        // 超出 native 后每级仍为全球网格相交计数（×4 增长）
+        let c19 = p.levels.iter().find(|l| l.z == 19).unwrap().count();
+        let c20 = p.levels.iter().find(|l| l.z == 20).unwrap().count();
+        assert!((c20 as f64 / c19 as f64) > 3.0 && (c20 as f64 / c19 as f64) < 5.0);
     }
 }

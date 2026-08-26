@@ -1134,11 +1134,13 @@ impl SseDecode for crate::api::task_api::TaskEventKind {
                 let mut var_tilesDone = <u64>::sse_decode(deserializer);
                 let mut var_totalTiles = <u64>::sse_decode(deserializer);
                 let mut var_bytesWritten = <u64>::sse_decode(deserializer);
+                let mut var_elapsedMs = <u64>::sse_decode(deserializer);
                 return crate::api::task_api::TaskEventKind::Progress {
                     level: var_level,
                     tiles_done: var_tilesDone,
                     total_tiles: var_totalTiles,
                     bytes_written: var_bytesWritten,
+                    elapsed_ms: var_elapsedMs,
                 };
             }
             4 => {
@@ -1542,12 +1544,14 @@ impl flutter_rust_bridge::IntoDart for crate::api::task_api::TaskEventKind {
                 tiles_done,
                 total_tiles,
                 bytes_written,
+                elapsed_ms,
             } => [
                 3.into_dart(),
                 level.into_into_dart().into_dart(),
                 tiles_done.into_into_dart().into_dart(),
                 total_tiles.into_into_dart().into_dart(),
                 bytes_written.into_into_dart().into_dart(),
+                elapsed_ms.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::api::task_api::TaskEventKind::Finished { summary } => {
@@ -1897,12 +1901,14 @@ impl SseEncode for crate::api::task_api::TaskEventKind {
                 tiles_done,
                 total_tiles,
                 bytes_written,
+                elapsed_ms,
             } => {
                 <i32>::sse_encode(3, serializer);
                 <u32>::sse_encode(level, serializer);
                 <u64>::sse_encode(tiles_done, serializer);
                 <u64>::sse_encode(total_tiles, serializer);
                 <u64>::sse_encode(bytes_written, serializer);
+                <u64>::sse_encode(elapsed_ms, serializer);
             }
             crate::api::task_api::TaskEventKind::Finished { summary } => {
                 <i32>::sse_encode(4, serializer);

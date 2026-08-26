@@ -79,6 +79,7 @@ pub enum TaskEventKind {
         tiles_done: u64,
         total_tiles: u64,
         bytes_written: u64,
+        elapsed_ms: u64,
     },
     Finished { summary: TaskSummary },
 }
@@ -691,6 +692,7 @@ fn worker(entry: Arc<TaskEntry>) {
                     snap.tiles_done = p.tiles_done;
                     snap.total_tiles = p.total_tiles;
                     snap.bytes_written = p.bytes_written;
+                    snap.elapsed_ms = p.elapsed_ms;
                 }
                 CutEvent::Done(_) => {}
             }
@@ -705,6 +707,7 @@ fn worker(entry: Arc<TaskEntry>) {
                     tiles_done: s.tiles_done,
                     total_tiles: s.total_tiles,
                     bytes_written: s.bytes_written,
+                    elapsed_ms: s.elapsed_ms,
                 }
             }
             CutEvent::Done(_) => return, // 由 worker 统一上报 Finished

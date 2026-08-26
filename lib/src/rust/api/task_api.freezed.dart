@@ -129,13 +129,13 @@ return finished(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String status)?  statusChanged,TResult Function( BigInt totalTiles)?  started,TResult Function( int level)?  levelStart,TResult Function( int level,  BigInt tilesDone,  BigInt totalTiles,  BigInt bytesWritten)?  progress,TResult Function( TaskSummary summary)?  finished,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String status)?  statusChanged,TResult Function( BigInt totalTiles)?  started,TResult Function( int level)?  levelStart,TResult Function( int level,  BigInt tilesDone,  BigInt totalTiles,  BigInt bytesWritten,  BigInt elapsedMs)?  progress,TResult Function( TaskSummary summary)?  finished,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case TaskEventKind_StatusChanged() when statusChanged != null:
 return statusChanged(_that.status);case TaskEventKind_Started() when started != null:
 return started(_that.totalTiles);case TaskEventKind_LevelStart() when levelStart != null:
 return levelStart(_that.level);case TaskEventKind_Progress() when progress != null:
-return progress(_that.level,_that.tilesDone,_that.totalTiles,_that.bytesWritten);case TaskEventKind_Finished() when finished != null:
+return progress(_that.level,_that.tilesDone,_that.totalTiles,_that.bytesWritten,_that.elapsedMs);case TaskEventKind_Finished() when finished != null:
 return finished(_that.summary);case _:
   return orElse();
 
@@ -154,13 +154,13 @@ return finished(_that.summary);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String status)  statusChanged,required TResult Function( BigInt totalTiles)  started,required TResult Function( int level)  levelStart,required TResult Function( int level,  BigInt tilesDone,  BigInt totalTiles,  BigInt bytesWritten)  progress,required TResult Function( TaskSummary summary)  finished,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String status)  statusChanged,required TResult Function( BigInt totalTiles)  started,required TResult Function( int level)  levelStart,required TResult Function( int level,  BigInt tilesDone,  BigInt totalTiles,  BigInt bytesWritten,  BigInt elapsedMs)  progress,required TResult Function( TaskSummary summary)  finished,}) {final _that = this;
 switch (_that) {
 case TaskEventKind_StatusChanged():
 return statusChanged(_that.status);case TaskEventKind_Started():
 return started(_that.totalTiles);case TaskEventKind_LevelStart():
 return levelStart(_that.level);case TaskEventKind_Progress():
-return progress(_that.level,_that.tilesDone,_that.totalTiles,_that.bytesWritten);case TaskEventKind_Finished():
+return progress(_that.level,_that.tilesDone,_that.totalTiles,_that.bytesWritten,_that.elapsedMs);case TaskEventKind_Finished():
 return finished(_that.summary);}
 }
 /// A variant of `when` that fallback to returning `null`
@@ -175,13 +175,13 @@ return finished(_that.summary);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String status)?  statusChanged,TResult? Function( BigInt totalTiles)?  started,TResult? Function( int level)?  levelStart,TResult? Function( int level,  BigInt tilesDone,  BigInt totalTiles,  BigInt bytesWritten)?  progress,TResult? Function( TaskSummary summary)?  finished,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String status)?  statusChanged,TResult? Function( BigInt totalTiles)?  started,TResult? Function( int level)?  levelStart,TResult? Function( int level,  BigInt tilesDone,  BigInt totalTiles,  BigInt bytesWritten,  BigInt elapsedMs)?  progress,TResult? Function( TaskSummary summary)?  finished,}) {final _that = this;
 switch (_that) {
 case TaskEventKind_StatusChanged() when statusChanged != null:
 return statusChanged(_that.status);case TaskEventKind_Started() when started != null:
 return started(_that.totalTiles);case TaskEventKind_LevelStart() when levelStart != null:
 return levelStart(_that.level);case TaskEventKind_Progress() when progress != null:
-return progress(_that.level,_that.tilesDone,_that.totalTiles,_that.bytesWritten);case TaskEventKind_Finished() when finished != null:
+return progress(_that.level,_that.tilesDone,_that.totalTiles,_that.bytesWritten,_that.elapsedMs);case TaskEventKind_Finished() when finished != null:
 return finished(_that.summary);case _:
   return null;
 
@@ -392,13 +392,14 @@ as int,
 
 
 class TaskEventKind_Progress extends TaskEventKind {
-  const TaskEventKind_Progress({required this.level, required this.tilesDone, required this.totalTiles, required this.bytesWritten}): super._();
+  const TaskEventKind_Progress({required this.level, required this.tilesDone, required this.totalTiles, required this.bytesWritten, required this.elapsedMs}): super._();
   
 
  final  int level;
  final  BigInt tilesDone;
  final  BigInt totalTiles;
  final  BigInt bytesWritten;
+ final  BigInt elapsedMs;
 
 /// Create a copy of TaskEventKind
 /// with the given fields replaced by the non-null parameter values.
@@ -410,16 +411,16 @@ $TaskEventKind_ProgressCopyWith<TaskEventKind_Progress> get copyWith => _$TaskEv
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is TaskEventKind_Progress&&(identical(other.level, level) || other.level == level)&&(identical(other.tilesDone, tilesDone) || other.tilesDone == tilesDone)&&(identical(other.totalTiles, totalTiles) || other.totalTiles == totalTiles)&&(identical(other.bytesWritten, bytesWritten) || other.bytesWritten == bytesWritten));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is TaskEventKind_Progress&&(identical(other.level, level) || other.level == level)&&(identical(other.tilesDone, tilesDone) || other.tilesDone == tilesDone)&&(identical(other.totalTiles, totalTiles) || other.totalTiles == totalTiles)&&(identical(other.bytesWritten, bytesWritten) || other.bytesWritten == bytesWritten)&&(identical(other.elapsedMs, elapsedMs) || other.elapsedMs == elapsedMs));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,level,tilesDone,totalTiles,bytesWritten);
+int get hashCode => Object.hash(runtimeType,level,tilesDone,totalTiles,bytesWritten,elapsedMs);
 
 @override
 String toString() {
-  return 'TaskEventKind.progress(level: $level, tilesDone: $tilesDone, totalTiles: $totalTiles, bytesWritten: $bytesWritten)';
+  return 'TaskEventKind.progress(level: $level, tilesDone: $tilesDone, totalTiles: $totalTiles, bytesWritten: $bytesWritten, elapsedMs: $elapsedMs)';
 }
 
 
@@ -430,7 +431,7 @@ abstract mixin class $TaskEventKind_ProgressCopyWith<$Res> implements $TaskEvent
   factory $TaskEventKind_ProgressCopyWith(TaskEventKind_Progress value, $Res Function(TaskEventKind_Progress) _then) = _$TaskEventKind_ProgressCopyWithImpl;
 @useResult
 $Res call({
- int level, BigInt tilesDone, BigInt totalTiles, BigInt bytesWritten
+ int level, BigInt tilesDone, BigInt totalTiles, BigInt bytesWritten, BigInt elapsedMs
 });
 
 
@@ -447,12 +448,13 @@ class _$TaskEventKind_ProgressCopyWithImpl<$Res>
 
 /// Create a copy of TaskEventKind
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? level = null,Object? tilesDone = null,Object? totalTiles = null,Object? bytesWritten = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? level = null,Object? tilesDone = null,Object? totalTiles = null,Object? bytesWritten = null,Object? elapsedMs = null,}) {
   return _then(TaskEventKind_Progress(
 level: null == level ? _self.level : level // ignore: cast_nullable_to_non_nullable
 as int,tilesDone: null == tilesDone ? _self.tilesDone : tilesDone // ignore: cast_nullable_to_non_nullable
 as BigInt,totalTiles: null == totalTiles ? _self.totalTiles : totalTiles // ignore: cast_nullable_to_non_nullable
 as BigInt,bytesWritten: null == bytesWritten ? _self.bytesWritten : bytesWritten // ignore: cast_nullable_to_non_nullable
+as BigInt,elapsedMs: null == elapsedMs ? _self.elapsedMs : elapsedMs // ignore: cast_nullable_to_non_nullable
 as BigInt,
   ));
 }

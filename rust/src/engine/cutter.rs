@@ -40,6 +40,8 @@ pub struct ProgressSnapshot {
     pub tiles_done: u64,
     pub total_tiles: u64,
     pub bytes_written: u64,
+    /// 实时用时（毫秒），供 UI 显示总用时/ETA
+    pub elapsed_ms: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -254,7 +256,7 @@ pub fn run_cut_with_control(
     let workers_done = Arc::new(AtomicBool::new(false));
     let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
-    // ---- 进度心跳线程 ----
+    // ---- 进度心跳线程（先启动：大图首次解码期间也有进度心跳）----
     let ticker_state = TickerShared {
         sink: Arc::clone(&sink),
         done_tiles: Arc::clone(&done_tiles),
@@ -263,12 +265,40 @@ pub fn run_cut_with_control(
         control: Arc::clone(&control),
         workers_done: Arc::clone(&workers_done),
         total,
+        started,
     };
     let ticker = thread::spawn(move || ticker_loop(ticker_state));
 
+    // ---- 巨型条带源：全图光栅共享（一次解码，避免每瓦片重复解压整条带）----
+    let shared_full: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new({
+        let probe = SourceReader::open(&params.source);
+        match probe {
+            Ok(p) => {
+                let gb = p.giant_strip_bytes();
+                let total_rgba = p.width as u64 * p.height as u64 * 4;
+                if gb > 32 * 1024 * 1024 && total_rgba <= 3 * 1024 * 1024 * 1024 {
+                    let mut r = p;
+                    match r.read_full() {
+                        Ok(buf) => Some(buf),
+                        Err(e) => {
+                            workers_done.store(true, Ordering::Relaxed);
+                            let _ = ticker.join();
+                            let s = summary_err(e.to_string());
+                            emit(CutEvent::Done(s.clone()));
+                            return s;
+                        }
+                    }
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        }
+    }));
+
     let src_path = params.source.clone();
     let p_ref = params;
-    let py_ref = &pyramid;
+    let sf_full = Arc::clone(&shared_full);
 
     jobs.par_iter().for_each(|job| {
         // 暂停停靠（取消可打断）
@@ -292,32 +322,53 @@ pub fn run_cut_with_control(
             return;
         }
 
-        let result = THREAD_READER.with(|cell| {
-            ensure_thread_reader(&src_path)?;
-            let mut slot = cell.borrow_mut();
-            let reader = slot.as_mut().expect("thread reader prepared");
+        let result = if sf_full.lock().unwrap().is_some() {
+            // 巨型条带源：直接读共享全图（无解码竞争，取消/暂停即时生效）
+            let guard = sf_full.lock().unwrap();
+            let full = guard.as_ref().expect("checked some");
             match (&pyramid, geo_ref) {
-                (Some(py), _) => render_tile(
-                    reader,
+                (Some(py), _) => render_tile_from_full(
+                    full,
+                    src_w,
+                    src_h,
                     p_ref,
                     &py.levels[job.plan_idx],
-                    py.image_width,
-                    py.image_height,
                     job.tx,
                     job.ty,
                 ),
-                (_, Some(g)) => render_tile_mercator(
-                    reader,
-                    p_ref,
-                    g,
-                    merc_bounds,
-                    job.z,
-                    job.tx,
-                    job.ty,
+                (_, Some(g)) => render_tile_mercator_from_full(
+                    full, src_w, src_h, p_ref, g, job.z, job.tx, job.ty,
                 ),
                 _ => Err(CoreError::InvalidInput("内部模式错误".into())),
             }
-        });
+        } else {
+            THREAD_READER.with(|cell| {
+                ensure_thread_reader(&src_path)?;
+                let mut slot = cell.borrow_mut();
+                let reader = slot.as_mut().expect("thread reader prepared");
+                match (&pyramid, geo_ref) {
+                    (Some(py), _) => render_tile(
+                        reader,
+                        p_ref,
+                        &py.levels[job.plan_idx],
+                        py.image_width,
+                        py.image_height,
+                        job.tx,
+                        job.ty,
+                    ),
+                    (_, Some(g)) => render_tile_mercator(
+                        reader,
+                        p_ref,
+                        g,
+                        merc_bounds,
+                        job.z,
+                        job.tx,
+                        job.ty,
+                    ),
+                    _ => Err(CoreError::InvalidInput("内部模式错误".into())),
+                }
+            })
+        };
 
         match result {
             Ok(bytes) => {
@@ -532,56 +583,14 @@ fn render_tile_mercator(
     let mut img = image::RgbaImage::from_raw(iw.max(1), ih.max(1), crop)
         .ok_or_else(|| CoreError::Encoding("mercator 矩形缓冲不匹配".into()))?;
 
-    let filter = match params.resample {
-        Resample::Nearest => ImgFilter::Nearest,
-        Resample::Bilinear => ImgFilter::Triangle,
-    };
     let out_img = if img.width() == params.tile_size && img.height() == params.tile_size {
         img
     } else {
-        image::imageops::resize(&img, params.tile_size, params.tile_size, filter)
+        image::imageops::resize(&img, params.tile_size, params.tile_size, resample_filter(params.resample))
     };
-    img = out_img;
-
-    let mut rgba = img.into_raw();
-    params.alpha.apply(&mut rgba);
-
-    // 全透明瓦片跳过写入（两种模式统一遵守该开关）
-    if params.skip_empty {
-        let mut any_opaque = false;
-        let mut i = 3;
-        while i < rgba.len() {
-            if rgba[i] != 0 {
-                any_opaque = true;
-                break;
-            }
-            i += 4;
-        }
-        if !any_opaque {
-            return Ok(0);
-        }
-    }
-
-    let path = params
-        .output
-        .join(writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30)));
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| super::error::io_err(parent.display().to_string(), e))?;
-    }
-    let mut png: Vec<u8> = Vec::with_capacity((rgba.len() / 4) as usize);
-    {
-        let encoder = PngEncoder::new_with_quality(
-            Cursor::new(&mut png),
-            CompressionType::Fast,
-            FilterType::Sub,
-        );
-        encoder
-            .write_image(&rgba, params.tile_size, params.tile_size, ExtendedColorType::Rgba8)
-            .map_err(|e| CoreError::Encoding(e.to_string()))?;
-    }
-    std::fs::write(&path, &png).map_err(|e| super::error::io_err(path.display().to_string(), e))?;
-    Ok(png.len() as u64)
+    let rgba = out_img.into_raw();
+    let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
+    write_tile_png(params, rgba, params.tile_size, params.tile_size, rel)
 }
 
 // ---------------- 进度心跳 ----------------
@@ -594,6 +603,8 @@ struct TickerShared {
     control: Arc<TaskControl>,
     workers_done: Arc<AtomicBool>,
     total: u64,
+    /// 任务起始时刻（用于实时 elapsed/ETA）
+    started: Instant,
 }
 
 fn ticker_loop(st: TickerShared) {
@@ -614,6 +625,7 @@ fn ticker_loop(st: TickerShared) {
             tiles_done: st.done_tiles.load(Ordering::Relaxed),
             total_tiles: st.total,
             bytes_written: st.done_bytes.load(Ordering::Relaxed),
+            elapsed_ms: st.started.elapsed().as_millis() as u64,
         };
         if let Ok(mut f) = st.sink.lock() {
             f(CutEvent::Progress(snap));
@@ -625,6 +637,87 @@ fn ticker_loop(st: TickerShared) {
 }
 
 // ---------------- 单瓦片渲染 ----------------
+
+/// 从共享全图光栅复制矩形（语义同 SourceReader::read_rect：越界填 0）。
+fn copy_rect_from_full(
+    full: &[u8],
+    w: u32,
+    h: u32,
+    rx: i64,
+    ry: i64,
+    rw: u32,
+    rh: u32,
+) -> Vec<u8> {
+    let mut out = vec![0u8; rw as usize * rh as usize * 4];
+    if rx >= w as i64 || ry >= h as i64 || rx + rw as i64 <= 0 || ry + rh as i64 <= 0 {
+        return out;
+    }
+    let x0 = rx.clamp(0, w as i64 - 1);
+    let y0 = ry.clamp(0, h as i64 - 1);
+    let x1 = (rx + rw as i64 - 1).min(w as i64 - 1);
+    let y1 = (ry + rh as i64 - 1).min(h as i64 - 1);
+    for row in y0..=y1 {
+        let src = ((row as u32 * w) + x0 as u32) as usize * 4;
+        let dst_row = (row - ry) as usize;
+        let dst_col = (x0 - rx) as usize;
+        let dst = (dst_row * rw as usize + dst_col) * 4;
+        let span = (x1 - x0 + 1) as usize * 4;
+        out[dst..dst + span].copy_from_slice(&full[src..src + span]);
+    }
+    out
+}
+
+/// 统一收尾：alpha → 跳空判断 → PNG 编码落盘。
+fn write_tile_png(
+    params: &CutParams,
+    mut rgba: Vec<u8>,
+    out_w: u32,
+    out_h: u32,
+    rel: PathBuf,
+) -> CoreResult<u64> {
+    params.alpha.apply(&mut rgba);
+
+    if params.skip_empty {
+        let mut any_opaque = false;
+        let mut i = 3;
+        while i < rgba.len() {
+            if rgba[i] != 0 {
+                any_opaque = true;
+                break;
+            }
+            i += 4;
+        }
+        if !any_opaque {
+            return Ok(0);
+        }
+    }
+
+    let path = params.output.join(rel);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| super::error::io_err(parent.display().to_string(), e))?;
+    }
+    let mut png: Vec<u8> = Vec::with_capacity((rgba.len() / 4) as usize);
+    {
+        let encoder = PngEncoder::new_with_quality(
+            Cursor::new(&mut png),
+            CompressionType::Fast,
+            FilterType::Sub,
+        );
+        encoder
+            .write_image(&rgba, out_w, out_h, ExtendedColorType::Rgba8)
+            .map_err(|e| CoreError::Encoding(e.to_string()))?;
+    }
+    std::fs::write(&path, &png).map_err(|e| super::error::io_err(path.display().to_string(), e))?;
+    Ok(png.len() as u64)
+}
+
+fn resample_filter(resample: Resample) -> ImgFilter {
+    match resample {
+        Resample::Nearest => ImgFilter::Nearest,
+        Resample::Bilinear => ImgFilter::Triangle,
+    }
+}
 
 fn render_tile(
     reader: &mut SourceReader,
@@ -679,45 +772,106 @@ fn render_tile(
     };
 
     let mut rgba = out_img.into_raw();
-    params.alpha.apply(&mut rgba);
+    let rel = writer::tile_rel_path(params.scheme, lp.level, tx, ty, lp.tiles_y);
+    write_tile_png(params, rgba, out_w, out_h, rel)
+}
 
-    // 全透明瓦片跳过写入（不占磁盘；进度仍计入完成）
-    if params.skip_empty {
-        let mut any_opaque = false;
-        let mut i = 3;
-        while i < rgba.len() {
-            if rgba[i] != 0 {
-                any_opaque = true;
-                break;
-            }
-            i += 4;
-        }
-        if !any_opaque {
-            return Ok(0);
-        }
+/// 相对模式 · 共享全图路径（巨型条带源）
+fn render_tile_from_full(
+    full: &[u8],
+    src_w: u32,
+    src_h: u32,
+    params: &CutParams,
+    lp: &super::planner::LevelPlan,
+    tx: u32,
+    ty: u32,
+) -> CoreResult<u64> {
+    let t = params.tile_size;
+    let out_w = (lp.width - tx * t).min(t);
+    let out_h = (lp.height - ty * t).min(t);
+    if out_w == 0 || out_h == 0 {
+        return Err(CoreError::InvalidInput("空瓦片".into()));
     }
+    let sf = lp.scale;
+    let sx = (tx as f64 * t as f64 * sf).round() as i64;
+    let sy = (ty as f64 * t as f64 * sf).round() as i64;
+    let sw = (((out_w as f64 * sf).ceil() as i64).min(src_w as i64 - sx)).max(1);
+    let sh = (((out_h as f64 * sf).ceil() as i64).min(src_h as i64 - sy)).max(1);
+    let pad: i64 = if sf > 1.0 { sf.ceil() as i64 } else { 1 };
+    let rx = sx - pad;
+    let ry = sy - pad;
+    let rw = (sw + pad * 2) as u32;
+    let rh = (sh + pad * 2) as u32;
 
-    // 编码 PNG
-    let path = params
-        .output
-        .join(writer::tile_rel_path(params.scheme, lp.level, tx, ty, lp.tiles_y));
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| super::error::io_err(parent.display().to_string(), e))?;
-    }
-    let mut png: Vec<u8> = Vec::with_capacity((rgba.len() / 4) as usize);
+    let buf = copy_rect_from_full(full, src_w, src_h, rx, ry, rw, rh);
+    let img_full = image::RgbaImage::from_raw(rw, rh, buf)
+        .ok_or_else(|| CoreError::Encoding("缓冲不匹配".into()))?;
+    let cropped = image::imageops::crop_imm(
+        &img_full,
+        (sx - rx) as u32,
+        (sy - ry) as u32,
+        sw as u32,
+        sh as u32,
+    )
+    .to_image();
+    let out_img = if (sf - 1.0).abs() < f64::EPSILON
+        && cropped.width() == out_w
+        && cropped.height() == out_h
     {
-        let encoder = PngEncoder::new_with_quality(
-            Cursor::new(&mut png),
-            CompressionType::Fast,
-            FilterType::Sub,
-        );
-        encoder
-            .write_image(&rgba, out_w, out_h, ExtendedColorType::Rgba8)
-            .map_err(|e| CoreError::Encoding(e.to_string()))?;
-    }
-    std::fs::write(&path, &png).map_err(|e| super::error::io_err(path.display().to_string(), e))?;
-    Ok(png.len() as u64)
+        cropped
+    } else {
+        image::imageops::resize(&cropped, out_w, out_h, resample_filter(params.resample))
+    };
+    let mut rgba = out_img.into_raw();
+    let rel = writer::tile_rel_path(params.scheme, lp.level, tx, ty, lp.tiles_y);
+    write_tile_png(params, rgba, out_w, out_h, rel)
+}
+
+/// Mercator 模式 · 共享全图路径
+#[allow(clippy::too_many_arguments)]
+fn render_tile_mercator_from_full(
+    full: &[u8],
+    src_w: u32,
+    src_h: u32,
+    params: &CutParams,
+    g: super::meta::GeoRef,
+    z: u32,
+    tx: u32,
+    ty: u32,
+) -> CoreResult<u64> {
+    let t = params.tile_size as f64;
+    let res = super::mercator::INIT_RESOLUTION / 2f64.powi(z as i32);
+    let wx_l = tx as f64 * t * res - super::mercator::ORIGIN_SHIFT;
+    let wx_r = (tx + 1) as f64 * t * res - super::mercator::ORIGIN_SHIFT;
+    let wy_top = super::mercator::ORIGIN_SHIFT - ty as f64 * t * res;
+    let wy_bot = super::mercator::ORIGIN_SHIFT - (ty + 1) as f64 * t * res;
+    let fx0 = (wx_l - g.mx0) / g.sx;
+    let fx1 = (wx_r - g.mx0) / g.sx;
+    let fy_top = (wy_top - g.my_top) / g.sy;
+    let fy_bot = (wy_bot - g.my_top) / g.sy;
+    let rx = fx0.min(fx1).floor() as i64;
+    let rw = ((fx0.max(fx1)).ceil() as i64 - rx).max(1) as u32;
+    let ry = fy_top.min(fy_bot).floor() as i64;
+    let rh = ((fy_top.max(fy_bot)).ceil() as i64 - ry).max(1) as u32;
+
+    let crop = copy_rect_from_full(full, src_w, src_h, rx, ry, rw, rh);
+    let w = rw.max(1);
+    let h = rh.max(1);
+    let img = image::RgbaImage::from_raw(w, h, crop)
+        .ok_or_else(|| CoreError::Encoding("mercator 缓冲不匹配".into()))?;
+    let out_img = if img.width() == params.tile_size && img.height() == params.tile_size {
+        img
+    } else {
+        image::imageops::resize(
+            &img,
+            params.tile_size,
+            params.tile_size,
+            resample_filter(params.resample),
+        )
+    };
+    let mut rgba = out_img.into_raw();
+    let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
+    write_tile_png(params, rgba, params.tile_size, params.tile_size, rel)
 }
 
 #[cfg(test)]

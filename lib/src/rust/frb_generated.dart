@@ -1012,6 +1012,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           tilesDone: dco_decode_u_64(raw[2]),
           totalTiles: dco_decode_u_64(raw[3]),
           bytesWritten: dco_decode_u_64(raw[4]),
+          elapsedMs: dco_decode_u_64(raw[5]),
         );
       case 4:
         return TaskEventKind_Finished(
@@ -1434,11 +1435,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_tilesDone = sse_decode_u_64(deserializer);
         var var_totalTiles = sse_decode_u_64(deserializer);
         var var_bytesWritten = sse_decode_u_64(deserializer);
+        var var_elapsedMs = sse_decode_u_64(deserializer);
         return TaskEventKind_Progress(
           level: var_level,
           tilesDone: var_tilesDone,
           totalTiles: var_totalTiles,
           bytesWritten: var_bytesWritten,
+          elapsedMs: var_elapsedMs,
         );
       case 4:
         var var_summary = sse_decode_box_autoadd_task_summary(deserializer);
@@ -1795,12 +1798,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         tilesDone: final tilesDone,
         totalTiles: final totalTiles,
         bytesWritten: final bytesWritten,
+        elapsedMs: final elapsedMs,
       ):
         sse_encode_i_32(3, serializer);
         sse_encode_u_32(level, serializer);
         sse_encode_u_64(tilesDone, serializer);
         sse_encode_u_64(totalTiles, serializer);
         sse_encode_u_64(bytesWritten, serializer);
+        sse_encode_u_64(elapsedMs, serializer);
       case TaskEventKind_Finished(summary: final summary):
         sse_encode_i_32(4, serializer);
         sse_encode_box_autoadd_task_summary(summary, serializer);

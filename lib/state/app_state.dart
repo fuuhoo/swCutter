@@ -114,6 +114,7 @@ class AppState extends ChangeNotifier {
         tilesDone: k.tilesDone.toInt(),
         totalTiles: k.totalTiles.toInt(),
         bytesWritten: k.bytesWritten.toInt(),
+        elapsedMs: BigInt.from(k.elapsedMs),
       );
     } else if (k is api.TaskEventKind_Finished) {
       final s = k.summary;

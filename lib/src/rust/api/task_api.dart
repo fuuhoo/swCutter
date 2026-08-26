@@ -393,6 +393,7 @@ sealed class TaskEventKind with _$TaskEventKind {
     required BigInt tilesDone,
     required BigInt totalTiles,
     required BigInt bytesWritten,
+    required BigInt elapsedMs,
   }) = TaskEventKind_Progress;
   const factory TaskEventKind.finished({required TaskSummary summary}) =
       TaskEventKind_Finished;

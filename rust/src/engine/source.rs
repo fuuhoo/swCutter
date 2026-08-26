@@ -107,6 +107,41 @@ impl SourceReader {
         &self.path
     }
 
+    /// 单条带解码字节数超过该阈值视为「巨型条带」（逐块解码会反复整图解压）。
+    pub fn giant_strip_bytes(&self) -> u64 {
+        if self.chunk_type != ChunkType::Strip {
+            return 0;
+        }
+        (self.chunk_w as u64) * (self.chunk_h as u64) * 4
+    }
+
+    /// 整图 RGBA（一次性拼装全部 chunk，绕过 LRU）。
+    /// 用于巨型条带源：与其每块瓦片重复解压，不如全图驻留一份共享。
+    pub fn read_full(&mut self) -> CoreResult<Vec<u8>> {
+        let (w, h) = (self.width as usize, self.height as usize);
+        let mut out = vec![0u8; w * h * 4];
+        for ci in 0..self.chunk_count {
+            let (cox, coy) = self.chunk_origin(ci);
+            if cox >= self.width || coy >= self.height {
+                continue;
+            }
+            let (dw, dh) = self.dec.chunk_data_dimensions(ci);
+            let res = self.dec.read_chunk(ci)?;
+            let raw8 = meta::result_to_u8(&res)
+                .ok_or_else(|| CoreError::Unsupported("64 位样本".into()))?;
+            let rgba = convert_to_rgba(&raw8, self.colortype, dw as usize, dh as usize)?;
+            let cw = dw.min(self.width - cox) as usize;
+            let ch = dh.min(self.height - coy) as usize;
+            for row in 0..ch {
+                let src = row * dw as usize * 4;
+                let dst = ((coy as usize + row) * w + cox as usize) * 4;
+                let span = cw * 4;
+                out[dst..dst + span].copy_from_slice(&rgba[src..src + span]);
+            }
+        }
+        Ok(out)
+    }
+
     /// 确保某 chunk 已解码并进入缓存。
     fn ensure_chunk(&mut self, index: u32) -> CoreResult<()> {
         if self.cache.contains_key(&index) {
