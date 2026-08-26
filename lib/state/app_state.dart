@@ -279,10 +279,17 @@ class TaskDraft {
   int zmin = 0;
   int zmax = 0;
   String outputDir = '';
+  /// GDAL mercator 绝对级别模式（需 GeoTIFF 地理参考；zmax 截断 native）
+  bool mercator = false;
+  /// 全透明瓦片跳过写入（默认保留空白透明瓦片，对齐 gdal2tiles 行为）
+  bool skipEmpty = false;
   Uint8List? previewBytes;
   String previewError = '';
   bool loadingPreview = false;
   List<api.LevelEstimate>? estimates;
+  /// 估算返回的 native zoom（mercator=GSD 级别；relative=原始级别）
+  int? nativeZoom;
+  String estimateError = '';
 
   TaskDraft({
     required this.source,
@@ -304,6 +311,8 @@ class TaskDraft {
         scheme: scheme,
         alpha: alpha,
         resample: resample,
+        skipEmpty: skipEmpty,
+        mercator: mercator,
       );
 }
 
@@ -364,15 +373,20 @@ class DraftStore extends ChangeNotifier {
 
   Future<void> refreshEstimates(TaskDraft d) async {
     try {
-      d.estimates = await api.estimatePyramid(
+      final est = await api.estimatePyramidEx(
+        source: d.source,
         width: d.width,
         height: d.height,
         tileSize: d.tileSize,
         zmin: d.zmin,
         zmax: d.zmax,
+        mercator: d.mercator,
       );
-    } catch (_) {
+      d.estimates = est.levels;
+      d.nativeZoom = est.nativeZoom?.toInt();
+    } catch (e) {
       d.estimates = null;
+      d.estimateError = e.toString();
     }
     notifyListeners();
   }

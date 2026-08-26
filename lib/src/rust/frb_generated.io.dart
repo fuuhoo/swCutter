@@ -3,6 +3,7 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+import 'api/history_store.dart';
 import 'api/simple.dart';
 import 'api/task_api.dart';
 
@@ -70,6 +71,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<Rec> dco_decode_list_rec(dynamic raw);
+
+  @protected
   List<TaskDto> dco_decode_list_task_dto(dynamic raw);
 
   @protected
@@ -77,6 +81,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  PyramidEstimate dco_decode_pyramid_estimate(dynamic raw);
+
+  @protected
+  Rec dco_decode_rec(dynamic raw);
 
   @protected
   Resample dco_decode_resample(dynamic raw);
@@ -161,6 +171,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<Rec> sse_decode_list_rec(SseDeserializer deserializer);
+
+  @protected
   List<TaskDto> sse_decode_list_task_dto(SseDeserializer deserializer);
 
   @protected
@@ -168,6 +181,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  PyramidEstimate sse_decode_pyramid_estimate(SseDeserializer deserializer);
+
+  @protected
+  Rec sse_decode_rec(SseDeserializer deserializer);
 
   @protected
   Resample sse_decode_resample(SseDeserializer deserializer);
@@ -269,6 +288,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_rec(List<Rec> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_task_dto(List<TaskDto> self, SseSerializer serializer);
 
   @protected
@@ -276,6 +298,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_pyramid_estimate(
+    PyramidEstimate self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_rec(Rec self, SseSerializer serializer);
 
   @protected
   void sse_encode_resample(Resample self, SseSerializer serializer);

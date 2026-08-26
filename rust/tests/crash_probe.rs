@@ -33,6 +33,8 @@ fn probe_start_task_chain() {
         scheme: Scheme::Xyz,
         alpha: AlphaMode::Keep,
         resample: Resample::Bilinear,
+            skip_empty: false,
+            mercator: false,
     };
     let id = start_task(cfg).expect("start_task failed");
     println!("started id={id}");

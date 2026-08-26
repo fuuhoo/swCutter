@@ -11,15 +11,35 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'task_api.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `acquire`, `broadcast`, `default_concurrency`, `history_path`, `is_terminal`, `load_history`, `log`, `manager`, `new`, `now_ms`, `persist`, `release`, `to_dto`, `worker`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Gate`, `HistoryRec`, `Manager`, `SlotGuard`, `Snap`, `TaskEntry`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `acquire`, `broadcast`, `default_concurrency`, `is_terminal`, `load_history`, `log`, `manager`, `new`, `now_ms`, `persist`, `release`, `to_dto`, `worker`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Gate`, `Manager`, `SlotGuard`, `Snap`, `TaskEntry`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
 Future<ImageBrief> readImageInfo({required String path}) =>
     RustLib.instance.api.crateApiTaskApiReadImageInfo(path: path);
 
 /// 按给定参数估算各级瓦片数（UI 滑块实时调用，纯计算无 IO）。
+/// mercator=true 时走 GDAL 绝对级别语义（需要地理参考）。
+Future<PyramidEstimate> estimatePyramidEx({
+  required String source,
+  required int width,
+  required int height,
+  required int tileSize,
+  int? zmin,
+  int? zmax,
+  required bool mercator,
+}) => RustLib.instance.api.crateApiTaskApiEstimatePyramidEx(
+  source: source,
+  width: width,
+  height: height,
+  tileSize: tileSize,
+  zmin: zmin,
+  zmax: zmax,
+  mercator: mercator,
+);
+
+/// 兼容旧接口：相对模式估算。
 Future<List<LevelEstimate>> estimatePyramid({
   required int width,
   required int height,
@@ -170,6 +190,26 @@ class LevelEstimate {
           tiles == other.tiles;
 }
 
+/// 金字塔估算结果（双模式）。
+class PyramidEstimate {
+  /// mercator 模式下为 GSD 对应 native zoom；relative 模式 None
+  final int? nativeZoom;
+  final List<LevelEstimate> levels;
+
+  const PyramidEstimate({this.nativeZoom, required this.levels});
+
+  @override
+  int get hashCode => nativeZoom.hashCode ^ levels.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PyramidEstimate &&
+          runtimeType == other.runtimeType &&
+          nativeZoom == other.nativeZoom &&
+          levels == other.levels;
+}
+
 /// 一个切片任务的全部配置（Dart 侧构造）。
 class TaskConfig {
   final String source;
@@ -181,6 +221,12 @@ class TaskConfig {
   final AlphaMode alpha;
   final Resample resample;
 
+  /// 全透明瓦片跳过写入
+  final bool skipEmpty;
+
+  /// true = GDAL mercator 绝对级别模式（要求 GeoTIFF）
+  final bool mercator;
+
   const TaskConfig({
     required this.source,
     required this.output,
@@ -190,6 +236,8 @@ class TaskConfig {
     required this.scheme,
     required this.alpha,
     required this.resample,
+    required this.skipEmpty,
+    required this.mercator,
   });
 
   @override
@@ -201,7 +249,9 @@ class TaskConfig {
       zmax.hashCode ^
       scheme.hashCode ^
       alpha.hashCode ^
-      resample.hashCode;
+      resample.hashCode ^
+      skipEmpty.hashCode ^
+      mercator.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -215,7 +265,9 @@ class TaskConfig {
           zmax == other.zmax &&
           scheme == other.scheme &&
           alpha == other.alpha &&
-          resample == other.resample;
+          resample == other.resample &&
+          skipEmpty == other.skipEmpty &&
+          mercator == other.mercator;
 }
 
 /// 任务列表条目快照。

@@ -37,6 +37,8 @@ fn real_file_smoke() {
         scheme: Scheme::Xyz,
         alpha: AlphaMode::Keep,
         resample: Resample::Bilinear,
+            skip_empty: false,
+            mercator: false,
     };
     let events = Arc::new(Mutex::new(0usize));
     let ev2 = Arc::clone(&events);
@@ -97,6 +99,8 @@ fn real_file_resume() {
         scheme: Scheme::Xyz,
         alpha: AlphaMode::Keep,
         resample: Resample::Bilinear,
+            skip_empty: false,
+            mercator: false,
     };
     let sink = Arc::new(Mutex::new(|_: CutEvent| {}));
     let summary = run_cut(&params, sink);

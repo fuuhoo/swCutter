@@ -21,6 +21,10 @@ pub struct Rec {
     pub resample: Resample,
     pub zmin: Option<u32>,
     pub zmax: Option<u32>,
+    /// 全透明瓦片跳过写入
+    pub skip_empty: bool,
+    /// GDAL mercator 绝对级别模式
+    pub mercator: bool,
     pub status: String,
     pub level: u32,
     pub tiles_done: u64,
@@ -58,6 +62,8 @@ fn conn() -> &'static Mutex<Connection> {
                 resample TEXT NOT NULL,
                 zmin INTEGER,
                 zmax INTEGER,
+                skip_empty INTEGER NOT NULL DEFAULT 0,
+                mercator INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL,
                 level INTEGER NOT NULL DEFAULT 0,
                 tiles_done INTEGER NOT NULL DEFAULT 0,
@@ -70,6 +76,9 @@ fn conn() -> &'static Mutex<Connection> {
              );",
         )
         .expect("init history schema");
+        // 旧库迁移：补列（已存在则忽略）
+        let _ = c.execute_batch("ALTER TABLE tasks ADD COLUMN skip_empty INTEGER NOT NULL DEFAULT 0");
+        let _ = c.execute_batch("ALTER TABLE tasks ADD COLUMN mercator INTEGER NOT NULL DEFAULT 0");
         Mutex::new(c)
     })
 }
@@ -91,6 +100,7 @@ pub fn load() -> Vec<Rec> {
     let c = conn().lock().unwrap();
     let mut stmt = match c.prepare(
         "SELECT id, source, output, tile_size, scheme, alpha, resample, zmin, zmax,
+                skip_empty, mercator,
                 status, level, tiles_done, total_tiles, bytes_written, elapsed_ms,
                 error, started_ms, finished_ms
          FROM tasks ORDER BY id ASC",
@@ -112,15 +122,17 @@ pub fn load() -> Vec<Rec> {
             resample: de(&resample_s).unwrap_or(Resample::Bilinear),
             zmin: r.get::<_, Option<i64>>(7)?.map(|v| v as u32),
             zmax: r.get::<_, Option<i64>>(8)?.map(|v| v as u32),
-            status: r.get(9)?,
-            level: r.get::<_, i64>(10)? as u32,
-            tiles_done: r.get::<_, i64>(11)? as u64,
-            total_tiles: r.get::<_, i64>(12)? as u64,
-            bytes_written: r.get::<_, i64>(13)? as u64,
-            elapsed_ms: r.get::<_, i64>(14)? as u64,
-            error: r.get(15)?,
-            started_ms: r.get::<_, i64>(16)? as u64,
-            finished_ms: r.get::<_, i64>(17)? as u64,
+            skip_empty: r.get::<_, i64>(9)? != 0,
+            mercator: r.get::<_, i64>(10)? != 0,
+            status: r.get(11)?,
+            level: r.get::<_, i64>(12)? as u32,
+            tiles_done: r.get::<_, i64>(13)? as u64,
+            total_tiles: r.get::<_, i64>(14)? as u64,
+            bytes_written: r.get::<_, i64>(15)? as u64,
+            elapsed_ms: r.get::<_, i64>(16)? as u64,
+            error: r.get(17)?,
+            started_ms: r.get::<_, i64>(18)? as u64,
+            finished_ms: r.get::<_, i64>(19)? as u64,
         })
     };
     let rows = stmt.query_map([], map);
@@ -141,9 +153,10 @@ pub fn save(recs: &[Rec]) {
         {
             let mut ins = c.prepare_cached(
                 "INSERT INTO tasks (id, source, output, tile_size, scheme, alpha, resample,
-                                    zmin, zmax, status, level, tiles_done, total_tiles,
+                                    zmin, zmax, skip_empty, mercator,
+                                    status, level, tiles_done, total_tiles,
                                     bytes_written, elapsed_ms, error, started_ms, finished_ms)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
             )?;
             for r in recs {
                 ins.execute(rusqlite::params![
@@ -156,6 +169,8 @@ pub fn save(recs: &[Rec]) {
                     ser(&r.resample),
                     r.zmin.map(|v| v as i64),
                     r.zmax.map(|v| v as i64),
+                    r.skip_empty as i64,
+                    r.mercator as i64,
                     r.status,
                     r.level as i64,
                     r.tiles_done as i64,
@@ -190,6 +205,11 @@ fn import_legacy_json() {
         zmin: Option<u32>,
         zmax: Option<u32>,
         status: String,
+        // 新字段：旧 JSON 无 → 默认 false
+        #[serde(default)]
+        skip_empty: bool,
+        #[serde(default)]
+        mercator: bool,
         #[serde(default)]
         level: u32,
         #[serde(default)]
@@ -220,6 +240,8 @@ fn import_legacy_json() {
             resample: o.resample,
             zmin: o.zmin,
             zmax: o.zmax,
+            skip_empty: o.skip_empty,
+            mercator: o.mercator,
             status: o.status,
             level: o.level,
             tiles_done: o.tiles_done,

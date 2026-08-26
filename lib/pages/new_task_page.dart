@@ -338,6 +338,27 @@ class _FormColumn extends ConsumerWidget {
             ),
             onChanged: (v) => active.outputDir = v,
           ),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('跳过全透明瓦片',
+                style: TextStyle(fontSize: 13)),
+            subtitle: const Text('关闭时与 gdal2tiles 一致：空白区域也输出透明 PNG',
+                style: TextStyle(fontSize: 11)),
+            value: active.skipEmpty,
+            onChanged: (v) {
+              active.skipEmpty = v;
+              store.touch();
+            },
+          ),
+          if (active.estimateError.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(active.estimateError,
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      color: Theme.of(context).colorScheme.error)),
+            ),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -359,6 +380,32 @@ class _FormColumn extends ConsumerWidget {
         ]),
 
         _SectionCard(title: '级别范围', icon: Icons.layers_rounded, children: [
+          Row(
+            children: [
+              const Text('级别语义'),
+              const Spacer(),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(
+                      value: false,
+                      label: Text('自由(0–22)'),
+                      tooltip: '相对原始分辨率，可超采样放大'),
+                  ButtonSegment(
+                      value: true,
+                      label: Text('GDAL 绝对'),
+                      tooltip:
+                          'Web-Mercator 全球网格绝对缩放级，与 gdal2tiles 数量一致；需 GeoTIFF，超出原始自动截断'),
+                ],
+                selected: {active.mercator},
+                onSelectionChanged: (s) {
+                  active.mercator = s.first;
+                  if (active.mercator) active.zmax = active.zmax.clamp(0, 22);
+                  store.refreshEstimates(active);
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
           RangeSlider(
             values: RangeValues(active.zmin.toDouble(), active.zmax.toDouble()),
             min: 0,
@@ -378,12 +425,16 @@ class _FormColumn extends ConsumerWidget {
               Text('Z0 单瓦片全览',
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
               Text(
-                'Z${active.maxLevel}=原始'
-                '${active.zmax > active.maxLevel ? ' · 已放大 ${_pow2(active.zmax - active.maxLevel)}×' : ''}'
-                '${active.zmin > 0 ? ' · 跳过低级' : ''}',
+                active.mercator
+                    ? 'GDAL 模式 · 原始≈Z${active.nativeZoom ?? '?'}'
+                        '${active.zmax > (active.nativeZoom ?? 22) ? ' · 超出截断至 Z${active.nativeZoom ?? '?'}' : ''}'
+                        '${active.zmin > 0 ? ' · 跳过低级' : ''}'
+                    : 'Z${active.maxLevel}=原始'
+                        '${active.zmax > active.maxLevel ? ' · 已放大 ${_pow2(active.zmax - active.maxLevel)}×' : ''}'
+                        '${active.zmin > 0 ? ' · 跳过低级' : ''}',
                 style: TextStyle(
                     fontSize: 11,
-                    color: active.zmax > active.maxLevel
+                    color: !active.mercator && active.zmax > active.maxLevel
                         ? Theme.of(context).colorScheme.primary
                         : Colors.grey.shade500),
               ),

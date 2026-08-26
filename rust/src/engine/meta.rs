@@ -36,6 +36,69 @@ impl ImageInfo {
     }
 }
 
+/// GeoTIFF 地理参考（PixelScale + Tiepoint，无旋转）。
+#[derive(Debug, Clone, Copy)]
+pub struct GeoRef {
+    /// 左上角 X（经度或米）
+    pub mx0: f64,
+    /// 左上角 Y（纬度或米）
+    pub my_top: f64,
+    pub sx: f64,
+    pub sy: f64,
+    /// true = 单位为度（EPSG:4326），false = 米（EPSG:3857）
+    pub degrees: bool,
+}
+
+impl GeoRef {
+    /// 返回 EPSG:3857 bounds [minx, miny, maxx, maxy]
+    pub fn bounds3857(&self, w: u32, h: u32) -> [f64; 4] {
+        let (x0, y0) = (self.mx0, self.my_top);
+        let x1 = x0 + w as f64 * self.sx;
+        let y1 = y0 + h as f64 * self.sy; // 南边界（sy 为负）
+        if self.degrees {
+            let r = 6378137.0;
+            let to_m_x = |lon: f64| lon.to_radians() * r;
+            let to_m_y = |lat: f64| {
+                let clamped = lat.clamp(-85.05112878, 85.05112878);
+                (clamped.to_radians() * 0.5).tan().ln() * r
+            };
+            [
+                to_m_x(x0),
+                to_m_y(y1.min(y0)),
+                to_m_x(x1),
+                to_m_y(y1.max(y0)),
+            ]
+        } else {
+            [x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)]
+        }
+    }
+}
+
+/// 提取地理参考；无 PixelScale/Tiepoint 时返回 None。
+pub fn probe_georef(path: &Path) -> CoreResult<Option<GeoRef>> {
+    let file = File::open(path).map_err(|e| io_err(path.display().to_string(), e))?;
+    let mut dec = Decoder::new(file)?;
+    let scale = dec
+        .get_tag_f64_vec(Tag::Unknown(33550)) // ModelPixelScale
+        .unwrap_or_default();
+    let tie = dec
+        .get_tag_f64_vec(Tag::Unknown(33922)) // ModelTiepoint
+        .unwrap_or_default();
+    if scale.len() < 2 || tie.len() < 6 || scale[0] <= 0.0 || scale[1] == 0.0 {
+        return Ok(None);
+    }
+    let (mx0, my_top) = (tie[3], tie[4]);
+    // 度 vs 米：按数量级判断（经度 ≤360 且像素尺寸远小于 1）
+    let degrees = mx0.abs() <= 360.0 && my_top.abs() <= 90.0 && scale[0] < 1.0;
+    Ok(Some(GeoRef {
+        mx0,
+        my_top,
+        sx: scale[0],
+        sy: scale[1],
+        degrees,
+    }))
+}
+
 fn compression_name(code: u16) -> String {
     match code {
         1 => "无压缩".into(),

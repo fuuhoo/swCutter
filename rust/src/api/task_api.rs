@@ -27,6 +27,10 @@ pub struct TaskConfig {
     pub scheme: Scheme,
     pub alpha: AlphaMode,
     pub resample: Resample,
+    /// 全透明瓦片跳过写入
+    pub skip_empty: bool,
+    /// true = GDAL mercator 绝对级别模式（要求 GeoTIFF）
+    pub mercator: bool,
 }
 
 /// 图像元信息 + 默认金字塔估算。
@@ -239,6 +243,8 @@ fn load_history(mgr: &Manager) {
                 scheme: r.scheme,
                 alpha: r.alpha,
                 resample: r.resample,
+                skip_empty: r.skip_empty,
+                mercator: r.mercator,
             },
             status: Mutex::new(status),
             cancel: AtomicBool::new(true),
@@ -274,6 +280,8 @@ fn persist(mgr: &Manager) {
             resample: e.cfg.resample,
             zmin: e.cfg.zmin,
             zmax: e.cfg.zmax,
+            skip_empty: e.cfg.skip_empty,
+            mercator: e.cfg.mercator,
             status: e.status.lock().unwrap().clone(),
             level: snap.level,
             tiles_done: snap.tiles_done,
@@ -319,7 +327,73 @@ pub fn read_image_info(path: String) -> anyhow::Result<ImageBrief> {
     })
 }
 
+/// 金字塔估算结果（双模式）。
+#[derive(Debug, Clone)]
+pub struct PyramidEstimate {
+    /// mercator 模式下为 GSD 对应 native zoom；relative 模式 None
+    pub native_zoom: Option<u32>,
+    pub levels: Vec<LevelEstimate>,
+}
+
 /// 按给定参数估算各级瓦片数（UI 滑块实时调用，纯计算无 IO）。
+/// mercator=true 时走 GDAL 绝对级别语义（需要地理参考）。
+pub fn estimate_pyramid_ex(
+    source: String,
+    width: u32,
+    height: u32,
+    tile_size: u32,
+    zmin: Option<u32>,
+    zmax: Option<u32>,
+    mercator: bool,
+) -> anyhow::Result<PyramidEstimate> {
+    if !mercator {
+        let p = planner::plan(width, height, tile_size, zmin, zmax)?;
+        return Ok(PyramidEstimate {
+            native_zoom: Some(planner::native_level(width, height, tile_size)),
+            levels: p
+                .levels
+                .iter()
+                .map(|lp| LevelEstimate {
+                    level: lp.level,
+                    width: lp.width,
+                    height: lp.height,
+                    tiles_x: lp.tiles_x,
+                    tiles_y: lp.tiles_y,
+                    tiles: lp.tiles_x as u64 * lp.tiles_y as u64,
+                })
+                .collect(),
+        });
+    }
+    let g = crate::engine::meta::probe_georef(Path::new(&source))?
+        .ok_or_else(|| anyhow::anyhow!("影像缺少地理参考，无法使用 GDAL 绝对级别模式"))?;
+    let b = g.bounds3857(width, height);
+    let sx_m = (b[2] - b[0]) / width as f64;
+    let mp = crate::engine::mercator::plan(
+        b,
+        sx_m,
+        tile_size,
+        zmin,
+        zmax,
+        crate::engine::planner::MAX_TOTAL_TILES_HARD,
+    )?;
+    Ok(PyramidEstimate {
+        native_zoom: Some(mp.native_zoom),
+        levels: mp
+            .levels
+            .iter()
+            .map(|lv| LevelEstimate {
+                level: lv.z,
+                width: (lv.tx1 - lv.tx0 + 1).saturating_mul(tile_size),
+                height: (lv.ty1 - lv.ty0 + 1).saturating_mul(tile_size),
+                tiles_x: lv.tx1 - lv.tx0 + 1,
+                tiles_y: lv.ty1 - lv.ty0 + 1,
+                tiles: lv.count(),
+            })
+            .collect(),
+    })
+}
+
+/// 兼容旧接口：相对模式估算。
 pub fn estimate_pyramid(
     width: u32,
     height: u32,
@@ -327,19 +401,7 @@ pub fn estimate_pyramid(
     zmin: Option<u32>,
     zmax: Option<u32>,
 ) -> anyhow::Result<Vec<LevelEstimate>> {
-    let p = planner::plan(width, height, tile_size, zmin, zmax)?;
-    Ok(p
-        .levels
-        .iter()
-        .map(|lp| LevelEstimate {
-            level: lp.level,
-            width: lp.width,
-            height: lp.height,
-            tiles_x: lp.tiles_x,
-            tiles_y: lp.tiles_y,
-            tiles: lp.tiles_x as u64 * lp.tiles_y as u64,
-        })
-        .collect())
+    Ok(estimate_pyramid_ex(String::new(), width, height, tile_size, zmin, zmax, false)?.levels)
 }
 
 /// 生成界面内预览缩略图（PNG 字节）。超大图按行带抽稀采样，内存有界。
@@ -612,6 +674,8 @@ fn worker(entry: Arc<TaskEntry>) {
         scheme: entry.cfg.scheme,
         alpha: entry.cfg.alpha,
         resample: entry.cfg.resample,
+        skip_empty: entry.cfg.skip_empty,
+        mercator: entry.cfg.mercator,
     };
 
     let entry2 = Arc::clone(&entry);

@@ -28,6 +28,10 @@ pub struct CutParams {
     pub scheme: Scheme,
     pub alpha: AlphaMode,
     pub resample: Resample,
+    /// 透明处理后完全透明的瓦片不写文件
+    pub skip_empty: bool,
+    /// true = GDAL mercator 绝对级别模式（要求 GeoTIFF 地理参考，zmax 截断 native）
+    pub mercator: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -101,6 +105,10 @@ struct Job {
     plan_idx: usize,
     tx: u32,
     ty: u32,
+    /// 绝对级别号（relative 模式 = pyramid.levels[plan_idx].level）
+    z: u32,
+    /// TMS 翻转用总行数；mercator 模式 = 1<<z
+    tiles_y: u32,
 }
 
 /// 执行切片（同步阻塞）。`sink` 会在工作线程上被调用，需自行保证线程安全。
@@ -136,14 +144,59 @@ pub fn run_cut_with_control(
             return s;
         }
     };
-    let pyramid = match plan(src_w, src_h, params.tile_size, params.zmin, params.zmax) {
-        Ok(p) => p,
-        Err(e) => {
-            let s = summary_err(e.to_string());
-            emit(CutEvent::Done(s.clone()));
-            return s;
+    let mut geo_ref: Option<super::meta::GeoRef> = None;
+    let merc_bounds: [f64; 4];
+    let pyramid: Option<super::planner::PyramidPlan>;
+    let mplan: Option<super::mercator::MercPlan>;
+    if params.mercator {
+        match super::meta::probe_georef(&params.source) {
+            Ok(Some(g)) => {
+                let b = g.bounds3857(src_w, src_h);
+                let sx_m = (b[2] - b[0]) / src_w as f64;
+                mplan = Some(match super::mercator::plan(
+                    b,
+                    sx_m,
+                    params.tile_size,
+                    params.zmin,
+                    params.zmax,
+                    super::planner::MAX_TOTAL_TILES_HARD,
+                ) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let s = summary_err(e.to_string());
+                        emit(CutEvent::Done(s.clone()));
+                        return s;
+                    }
+                });
+                merc_bounds = b;
+                geo_ref = Some(g);
+            }
+            Ok(None) => {
+                let s = summary_err(
+                    "影像缺少地理参考（PixelScale/Tiepoint），无法使用 GDAL 绝对级别模式".into(),
+                );
+                emit(CutEvent::Done(s.clone()));
+                return s;
+            }
+            Err(e) => {
+                let s = summary_err(e.to_string());
+                emit(CutEvent::Done(s.clone()));
+                return s;
+            }
         }
-    };
+        pyramid = None;
+    } else {
+        merc_bounds = [0.0; 4];
+        mplan = None;
+        pyramid = Some(match plan(src_w, src_h, params.tile_size, params.zmin, params.zmax) {
+            Ok(p) => p,
+            Err(e) => {
+                let s = summary_err(e.to_string());
+                emit(CutEvent::Done(s.clone()));
+                return s;
+            }
+        });
+    }
 
     if let Err(e) = writer::ensure_out_dir(&params.output) {
         let s = summary_err(super::error::io_err(params.output.display().to_string(), e).to_string());
@@ -151,15 +204,29 @@ pub fn run_cut_with_control(
         return s;
     }
 
-    // ---- 任务列表（按级别升序）----
-    // 不预分配 total 容量：即使上游校验被绕过也只会缓慢增长而非瞬间 OOM
+    // ---- 任务列表（按级别升序；双模式统一 Job）----
     let mut jobs: Vec<Job> = Vec::new();
-    for (pi, lp) in pyramid.levels.iter().enumerate() {
-        for ty in 0..lp.tiles_y {
-            for tx in 0..lp.tiles_x {
-                jobs.push(Job { plan_idx: pi, tx, ty });
+    match (&pyramid, &mplan) {
+        (Some(py), _) => {
+            for (pi, lp) in py.levels.iter().enumerate() {
+                for ty in 0..lp.tiles_y {
+                    for tx in 0..lp.tiles_x {
+                        jobs.push(Job { plan_idx: pi, tx, ty, z: lp.level, tiles_y: lp.tiles_y });
+                    }
+                }
             }
         }
+        (_, Some(mp)) => {
+            for lv in &mp.levels {
+                let rows = 1u32 << lv.z.min(30);
+                for ty in lv.ty0..=lv.ty1 {
+                    for tx in lv.tx0..=lv.tx1 {
+                        jobs.push(Job { plan_idx: usize::MAX, tx, ty, z: lv.z, tiles_y: rows });
+                    }
+                }
+            }
+        }
+        _ => {}
     }
     let total = jobs.len() as u64;
     emit(CutEvent::Start { total_tiles: total });
@@ -169,9 +236,7 @@ pub fn run_cut_with_control(
     let mut skip: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     if resumable {
         for job in &jobs {
-            let lp = &pyramid.levels[job.plan_idx];
-            let rel =
-                writer::tile_rel_path(params.scheme, lp.level, job.tx, job.ty, lp.tiles_y);
+            let rel = writer::tile_rel_path(params.scheme, job.z, job.tx, job.ty, job.tiles_y);
             let full = params.output.join(&rel);
             if let Ok(md) = std::fs::metadata(&full) {
                 if md.len() > 0 {
@@ -213,11 +278,11 @@ pub fn run_cut_with_control(
         if control.cancel.load(Ordering::Relaxed) {
             return;
         }
-        let lp = &pyramid.levels[job.plan_idx];
-        current_level.fetch_max(lp.level, Ordering::Relaxed);
+        let z_label = job.z;
+        current_level.fetch_max(job.z, Ordering::Relaxed);
 
         // 断点续切命中：直接计入完成
-        let rel = writer::tile_rel_path(p_ref.scheme, lp.level, job.tx, job.ty, lp.tiles_y);
+        let rel = writer::tile_rel_path(p_ref.scheme, job.z, job.tx, job.ty, job.tiles_y);
         if !skip.is_empty() && skip.contains(&rel) {
             let bytes = std::fs::metadata(params.output.join(&rel))
                 .map(|m| m.len())
@@ -231,15 +296,27 @@ pub fn run_cut_with_control(
             ensure_thread_reader(&src_path)?;
             let mut slot = cell.borrow_mut();
             let reader = slot.as_mut().expect("thread reader prepared");
-            render_tile(
-                reader,
-                p_ref,
-                lp,
-                py_ref.image_width,
-                py_ref.image_height,
-                job.tx,
-                job.ty,
-            )
+            match (&pyramid, geo_ref) {
+                (Some(py), _) => render_tile(
+                    reader,
+                    p_ref,
+                    &py.levels[job.plan_idx],
+                    py.image_width,
+                    py.image_height,
+                    job.tx,
+                    job.ty,
+                ),
+                (_, Some(g)) => render_tile_mercator(
+                    reader,
+                    p_ref,
+                    g,
+                    merc_bounds,
+                    job.z,
+                    job.tx,
+                    job.ty,
+                ),
+                _ => Err(CoreError::InvalidInput("内部模式错误".into())),
+            }
         });
 
         match result {
@@ -251,8 +328,8 @@ pub fn run_cut_with_control(
                 let mut errs = errors.lock().unwrap();
                 if errs.len() < ERROR_CAP {
                     errs.push(format!(
-                        "L{} tile({},{}) 失败: {e}",
-                        lp.level, job.tx, job.ty
+                        "Z{} tile({},{}) 失败: {e}",
+                        z_label, job.tx, job.ty
                     ));
                 }
                 drop(errs);
@@ -269,14 +346,9 @@ pub fn run_cut_with_control(
 
     // ---- 收尾 ----
     let errs = errors.lock().unwrap().clone();
-    let mut summary = CutSummary {
-        output_dir: params.output.display().to_string(),
-        total_tiles: done_tiles.load(Ordering::Relaxed),
-        bytes_written: done_bytes.load(Ordering::Relaxed),
-        elapsed_ms: started.elapsed().as_millis() as u64,
-        cancelled: control.cancel.load(Ordering::Relaxed),
-        errors: errs.clone(),
-        levels: pyramid
+    // 统一 levels 摘要（双模式）
+    let summary_levels: Vec<LevelSummary> = match (&pyramid, &mplan) {
+        (Some(py), _) => py
             .levels
             .iter()
             .map(|lp| LevelSummary {
@@ -286,20 +358,43 @@ pub fn run_cut_with_control(
                 tiles: lp.tiles_x as u64 * lp.tiles_y as u64,
             })
             .collect(),
+        (_, Some(mp)) => mp
+            .levels
+            .iter()
+            .map(|lv| {
+                let nx = (lv.tx1 - lv.tx0 + 1) as u32;
+                let ny = (lv.ty1 - lv.ty0 + 1) as u32;
+                LevelSummary {
+                    level: lv.z,
+                    width: nx.saturating_mul(params.tile_size),
+                    height: ny.saturating_mul(params.tile_size),
+                    tiles: nx as u64 * ny as u64,
+                }
+            })
+            .collect(),
+        _ => vec![],
+    };
+    let mut summary = CutSummary {
+        output_dir: params.output.display().to_string(),
+        total_tiles: done_tiles.load(Ordering::Relaxed),
+        bytes_written: done_bytes.load(Ordering::Relaxed),
+        elapsed_ms: started.elapsed().as_millis() as u64,
+        cancelled: control.cancel.load(Ordering::Relaxed),
+        errors: errs.clone(),
+        levels: summary_levels.clone(),
     };
 
     if summary.errors.is_empty() && !summary.cancelled {
-        let manifest = writer::Manifest {
-            app: "swCutter".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
-            source: params.source.display().to_string(),
-            source_width: src_w,
-            source_height: src_h,
-            tile_size: params.tile_size,
-            scheme: params.scheme.as_str().into(),
-            min_level: pyramid.min_level_requested,
-            max_level: pyramid.max_level_requested,
-            levels: pyramid
+        let (min_lv, max_lv) = match (&pyramid, &mplan) {
+            (Some(py), _) => (py.min_level_requested, py.max_level_requested),
+            (_, Some(mp)) => (
+                mp.levels.first().map(|l| l.z).unwrap_or(0),
+                mp.levels.last().map(|l| l.z).unwrap_or(0),
+            ),
+            _ => (0, 0),
+        };
+        let manifest_levels: Vec<writer::ManifestLevel> = match (&pyramid, &mplan) {
+            (Some(py), _) => py
                 .levels
                 .iter()
                 .map(|lp| writer::ManifestLevel {
@@ -309,6 +404,33 @@ pub fn run_cut_with_control(
                     tiles: lp.tiles_x as u64 * lp.tiles_y as u64,
                 })
                 .collect(),
+            (_, Some(mp)) => mp
+                .levels
+                .iter()
+                .map(|lv| {
+                    let nx = (lv.tx1 - lv.tx0 + 1) as u64;
+                    let ny = (lv.ty1 - lv.ty0 + 1) as u64;
+                    writer::ManifestLevel {
+                        level: lv.z,
+                        width: (nx as u32).saturating_mul(params.tile_size),
+                        height: (ny as u32).saturating_mul(params.tile_size),
+                        tiles: nx * ny,
+                    }
+                })
+                .collect(),
+            _ => vec![],
+        };
+        let manifest = writer::Manifest {
+            app: "swCutter".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            source: params.source.display().to_string(),
+            source_width: src_w,
+            source_height: src_h,
+            tile_size: params.tile_size,
+            scheme: params.scheme.as_str().into(),
+            min_level: min_lv,
+            max_level: max_lv,
+            levels: manifest_levels.clone(),
             total_tiles: summary.total_tiles,
             bytes_written: summary.bytes_written,
         };
@@ -321,8 +443,8 @@ pub fn run_cut_with_control(
             source_w: src_w,
             source_h: src_h,
             tile_size: params.tile_size,
-            zmin: pyramid.min_level_requested,
-            zmax: pyramid.max_level_requested,
+            zmin: min_lv,
+            zmax: max_lv,
             tms: params.scheme == Scheme::Tms,
             levels: summary.levels.iter().map(|l| writer::ManifestLevel {
                 level: l.level,
@@ -359,6 +481,107 @@ fn ensure_thread_reader(path: &Path) -> CoreResult<()> {
         }
         Ok(())
     })
+}
+
+/// Mercator 绝对级别瓦片渲染：全球网格 → 源像素矩形 → 缩放至 tile。
+/// 影像范围外的区域输出全透明（对齐 gdal2tiles 的空白透明 PNG 行为）。
+#[allow(clippy::too_many_arguments)]
+fn render_tile_mercator(
+    reader: &mut SourceReader,
+    params: &CutParams,
+    g: super::meta::GeoRef,
+    bounds: [f64; 4],
+    z: u32,
+    tx: u32,
+    ty: u32,
+) -> CoreResult<u64> {
+    let _ = bounds; // bounds 仅用于规划；渲染由 georef 反算
+    let t = params.tile_size as f64;
+    let res = super::mercator::INIT_RESOLUTION / 2f64.powi(z as i32);
+    // 该瓦片的 3857 范围
+    let wx_l = tx as f64 * t * res - super::mercator::ORIGIN_SHIFT;
+    let wx_r = (tx + 1) as f64 * t * res - super::mercator::ORIGIN_SHIFT;
+    let wy_top = super::mercator::ORIGIN_SHIFT - ty as f64 * t * res;
+    let wy_bot = super::mercator::ORIGIN_SHIFT - (ty + 1) as f64 * t * res;
+
+    // 反算到源栅格像素坐标（浮点）
+    let fx0 = (wx_l - g.mx0) / g.sx;
+    let fx1 = (wx_r - g.mx0) / g.sx;
+    // my_top 是北边界；sy 为负时直接线性映射行号
+    let fy_top = (wy_top - g.my_top) / g.sy;
+    let fy_bot = (wy_bot - g.my_top) / g.sy;
+
+    let rx = fx0.min(fx1).floor() as i64;
+    let rw = ((fx0.max(fx1)).ceil() as i64 - rx).max(1) as u32;
+    let ry = fy_top.min(fy_bot).floor() as i64;
+    let rh = ((fy_top.max(fy_bot)).ceil() as i64 - ry).max(1) as u32;
+
+    // 与源图求交（完全在外 → 全透明瓦片）
+    let ix0 = rx.clamp(0, reader.width as i64);
+    let iy0 = ry.clamp(0, reader.height as i64);
+    let ix1 = (rx + rw as i64).clamp(0, reader.width as i64);
+    let iy1 = (ry + rh as i64).clamp(0, reader.height as i64);
+    let iw = (ix1 - ix0).max(0) as u32;
+    let ih = (iy1 - iy0).max(0) as u32;
+
+    let crop = if iw == 0 || ih == 0 {
+        vec![0u8; 4]
+    } else {
+        reader.read_rect(ix0, iy0, iw, ih)?
+    };
+    let mut img = image::RgbaImage::from_raw(iw.max(1), ih.max(1), crop)
+        .ok_or_else(|| CoreError::Encoding("mercator 矩形缓冲不匹配".into()))?;
+
+    let filter = match params.resample {
+        Resample::Nearest => ImgFilter::Nearest,
+        Resample::Bilinear => ImgFilter::Triangle,
+    };
+    let out_img = if img.width() == params.tile_size && img.height() == params.tile_size {
+        img
+    } else {
+        image::imageops::resize(&img, params.tile_size, params.tile_size, filter)
+    };
+    img = out_img;
+
+    let mut rgba = img.into_raw();
+    params.alpha.apply(&mut rgba);
+
+    // 全透明瓦片跳过写入（两种模式统一遵守该开关）
+    if params.skip_empty {
+        let mut any_opaque = false;
+        let mut i = 3;
+        while i < rgba.len() {
+            if rgba[i] != 0 {
+                any_opaque = true;
+                break;
+            }
+            i += 4;
+        }
+        if !any_opaque {
+            return Ok(0);
+        }
+    }
+
+    let path = params
+        .output
+        .join(writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30)));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| super::error::io_err(parent.display().to_string(), e))?;
+    }
+    let mut png: Vec<u8> = Vec::with_capacity((rgba.len() / 4) as usize);
+    {
+        let encoder = PngEncoder::new_with_quality(
+            Cursor::new(&mut png),
+            CompressionType::Fast,
+            FilterType::Sub,
+        );
+        encoder
+            .write_image(&rgba, params.tile_size, params.tile_size, ExtendedColorType::Rgba8)
+            .map_err(|e| CoreError::Encoding(e.to_string()))?;
+    }
+    std::fs::write(&path, &png).map_err(|e| super::error::io_err(path.display().to_string(), e))?;
+    Ok(png.len() as u64)
 }
 
 // ---------------- 进度心跳 ----------------
@@ -458,6 +681,22 @@ fn render_tile(
     let mut rgba = out_img.into_raw();
     params.alpha.apply(&mut rgba);
 
+    // 全透明瓦片跳过写入（不占磁盘；进度仍计入完成）
+    if params.skip_empty {
+        let mut any_opaque = false;
+        let mut i = 3;
+        while i < rgba.len() {
+            if rgba[i] != 0 {
+                any_opaque = true;
+                break;
+            }
+            i += 4;
+        }
+        if !any_opaque {
+            return Ok(0);
+        }
+    }
+
     // 编码 PNG
     let path = params
         .output
@@ -550,6 +789,8 @@ mod tests {
             scheme: Scheme::Xyz,
             alpha: AlphaMode::Keep,
             resample: Resample::Nearest,
+            skip_empty: false,
+            mercator: false,
         };
         let sum = run_cut(&params, noop_sink());
         assert!(sum.errors.is_empty(), "errors: {:?}", sum.errors);
@@ -631,6 +872,8 @@ mod tests {
             scheme: Scheme::Xyz,
             alpha: AlphaMode::ColorKey { r: 255, g: 255, b: 255, tolerance: 2 },
             resample: Resample::Bilinear,
+            skip_empty: false,
+            mercator: false,
         };
         let sum = run_cut(&params, noop_sink());
         assert!(sum.errors.is_empty(), "{:?}", sum.errors);
@@ -663,6 +906,8 @@ mod tests {
             scheme: Scheme::Xyz,
             alpha: AlphaMode::Keep,
             resample: Resample::Nearest,
+            skip_empty: false,
+            mercator: false,
         };
 
         // 首次完整切片

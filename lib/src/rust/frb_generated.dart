@@ -3,6 +3,7 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+import 'api/history_store.dart';
 import 'api/simple.dart';
 import 'api/task_api.dart';
 
@@ -72,7 +73,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 496347766;
+  int get rustContentHash => 1147638376;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -94,13 +95,27 @@ abstract class RustLibApi extends BaseApi {
     int? zmax,
   });
 
+  Future<PyramidEstimate> crateApiTaskApiEstimatePyramidEx({
+    required String source,
+    required int width,
+    required int height,
+    required int tileSize,
+    int? zmin,
+    int? zmax,
+    required bool mercator,
+  });
+
   Future<int> crateApiTaskApiGetMaxConcurrency();
 
   String crateApiSimpleGreet({required String name});
 
+  Future<void> crateApiHistoryStoreInit();
+
   Future<void> crateApiSimpleInitApp();
 
   Future<List<TaskDto>> crateApiTaskApiListTasks();
+
+  Future<List<Rec>> crateApiHistoryStoreLoad();
 
   Future<Uint8List> crateApiTaskApiMakePreview({
     required String source,
@@ -120,6 +135,8 @@ abstract class RustLibApi extends BaseApi {
     required PlatformInt64 x,
     required PlatformInt64 y,
   });
+
+  Future<void> crateApiHistoryStoreSave({required List<Rec> recs});
 
   Future<void> crateApiTaskApiSetMaxConcurrency({required int n});
 
@@ -206,6 +223,59 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<PyramidEstimate> crateApiTaskApiEstimatePyramidEx({
+    required String source,
+    required int width,
+    required int height,
+    required int tileSize,
+    int? zmin,
+    int? zmax,
+    required bool mercator,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(source, serializer);
+          sse_encode_u_32(width, serializer);
+          sse_encode_u_32(height, serializer);
+          sse_encode_u_32(tileSize, serializer);
+          sse_encode_opt_box_autoadd_u_32(zmin, serializer);
+          sse_encode_opt_box_autoadd_u_32(zmax, serializer);
+          sse_encode_bool(mercator, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_pyramid_estimate,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiTaskApiEstimatePyramidExConstMeta,
+        argValues: [source, width, height, tileSize, zmin, zmax, mercator],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTaskApiEstimatePyramidExConstMeta =>
+      const TaskConstMeta(
+        debugName: "estimate_pyramid_ex",
+        argNames: [
+          "source",
+          "width",
+          "height",
+          "tileSize",
+          "zmin",
+          "zmax",
+          "mercator",
+        ],
+      );
+
+  @override
   Future<int> crateApiTaskApiGetMaxConcurrency() {
     return handler.executeNormal(
       NormalTask(
@@ -214,7 +284,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 3,
+            funcId: 4,
             port: port_,
           );
         },
@@ -239,7 +309,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -256,6 +326,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "greet", argNames: ["name"]);
 
   @override
+  Future<void> crateApiHistoryStoreInit() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiHistoryStoreInitConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiHistoryStoreInitConstMeta =>
+      const TaskConstMeta(debugName: "init", argNames: []);
+
+  @override
   Future<void> crateApiSimpleInitApp() {
     return handler.executeNormal(
       NormalTask(
@@ -264,7 +361,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 7,
             port: port_,
           );
         },
@@ -291,7 +388,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 8,
             port: port_,
           );
         },
@@ -310,6 +407,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "list_tasks", argNames: []);
 
   @override
+  Future<List<Rec>> crateApiHistoryStoreLoad() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 9,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_rec,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiHistoryStoreLoadConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiHistoryStoreLoadConstMeta =>
+      const TaskConstMeta(debugName: "load", argNames: []);
+
+  @override
   Future<Uint8List> crateApiTaskApiMakePreview({
     required String source,
     required int maxPx,
@@ -323,7 +447,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 10,
             port: port_,
           );
         },
@@ -353,7 +477,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 11,
             port: port_,
           );
         },
@@ -381,7 +505,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 12,
             port: port_,
           );
         },
@@ -409,7 +533,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 13,
             port: port_,
           );
         },
@@ -437,7 +561,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 14,
             port: port_,
           );
         },
@@ -471,7 +595,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 15,
             port: port_,
           );
         },
@@ -492,6 +616,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
+  Future<void> crateApiHistoryStoreSave({required List<Rec> recs}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_rec(recs, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 16,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiHistoryStoreSaveConstMeta,
+        argValues: [recs],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiHistoryStoreSaveConstMeta =>
+      const TaskConstMeta(debugName: "save", argNames: ["recs"]);
+
+  @override
   Future<void> crateApiTaskApiSetMaxConcurrency({required int n}) {
     return handler.executeNormal(
       NormalTask(
@@ -501,7 +653,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 17,
             port: port_,
           );
         },
@@ -529,7 +681,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 18,
             port: port_,
           );
         },
@@ -559,7 +711,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 15,
+              funcId: 19,
               port: port_,
             );
           },
@@ -707,6 +859,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<Rec> dco_decode_list_rec(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_rec).toList();
+  }
+
+  @protected
   List<TaskDto> dco_decode_list_task_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_task_dto).toList();
@@ -725,6 +883,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PyramidEstimate dco_decode_pyramid_estimate(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return PyramidEstimate(
+      nativeZoom: dco_decode_opt_box_autoadd_u_32(arr[0]),
+      levels: dco_decode_list_level_estimate(arr[1]),
+    );
+  }
+
+  @protected
+  Rec dco_decode_rec(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 20)
+      throw Exception('unexpected arr length: expect 20 but see ${arr.length}');
+    return Rec(
+      id: dco_decode_u_64(arr[0]),
+      source: dco_decode_String(arr[1]),
+      output: dco_decode_String(arr[2]),
+      tileSize: dco_decode_u_32(arr[3]),
+      scheme: dco_decode_scheme(arr[4]),
+      alpha: dco_decode_alpha_mode(arr[5]),
+      resample: dco_decode_resample(arr[6]),
+      zmin: dco_decode_opt_box_autoadd_u_32(arr[7]),
+      zmax: dco_decode_opt_box_autoadd_u_32(arr[8]),
+      skipEmpty: dco_decode_bool(arr[9]),
+      mercator: dco_decode_bool(arr[10]),
+      status: dco_decode_String(arr[11]),
+      level: dco_decode_u_32(arr[12]),
+      tilesDone: dco_decode_u_64(arr[13]),
+      totalTiles: dco_decode_u_64(arr[14]),
+      bytesWritten: dco_decode_u_64(arr[15]),
+      elapsedMs: dco_decode_u_64(arr[16]),
+      error: dco_decode_opt_String(arr[17]),
+      startedMs: dco_decode_u_64(arr[18]),
+      finishedMs: dco_decode_u_64(arr[19]),
+    );
+  }
+
+  @protected
   Resample dco_decode_resample(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return Resample.values[raw as int];
@@ -740,8 +940,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConfig dco_decode_task_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 8)
-      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
     return TaskConfig(
       source: dco_decode_String(arr[0]),
       output: dco_decode_String(arr[1]),
@@ -751,6 +951,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       scheme: dco_decode_scheme(arr[5]),
       alpha: dco_decode_alpha_mode(arr[6]),
       resample: dco_decode_resample(arr[7]),
+      skipEmpty: dco_decode_bool(arr[8]),
+      mercator: dco_decode_bool(arr[9]),
     );
   }
 
@@ -1020,6 +1222,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<Rec> sse_decode_list_rec(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <Rec>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_rec(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<TaskDto> sse_decode_list_task_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -1054,6 +1268,61 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PyramidEstimate sse_decode_pyramid_estimate(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_nativeZoom = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_levels = sse_decode_list_level_estimate(deserializer);
+    return PyramidEstimate(nativeZoom: var_nativeZoom, levels: var_levels);
+  }
+
+  @protected
+  Rec sse_decode_rec(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_u_64(deserializer);
+    var var_source = sse_decode_String(deserializer);
+    var var_output = sse_decode_String(deserializer);
+    var var_tileSize = sse_decode_u_32(deserializer);
+    var var_scheme = sse_decode_scheme(deserializer);
+    var var_alpha = sse_decode_alpha_mode(deserializer);
+    var var_resample = sse_decode_resample(deserializer);
+    var var_zmin = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_zmax = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_skipEmpty = sse_decode_bool(deserializer);
+    var var_mercator = sse_decode_bool(deserializer);
+    var var_status = sse_decode_String(deserializer);
+    var var_level = sse_decode_u_32(deserializer);
+    var var_tilesDone = sse_decode_u_64(deserializer);
+    var var_totalTiles = sse_decode_u_64(deserializer);
+    var var_bytesWritten = sse_decode_u_64(deserializer);
+    var var_elapsedMs = sse_decode_u_64(deserializer);
+    var var_error = sse_decode_opt_String(deserializer);
+    var var_startedMs = sse_decode_u_64(deserializer);
+    var var_finishedMs = sse_decode_u_64(deserializer);
+    return Rec(
+      id: var_id,
+      source: var_source,
+      output: var_output,
+      tileSize: var_tileSize,
+      scheme: var_scheme,
+      alpha: var_alpha,
+      resample: var_resample,
+      zmin: var_zmin,
+      zmax: var_zmax,
+      skipEmpty: var_skipEmpty,
+      mercator: var_mercator,
+      status: var_status,
+      level: var_level,
+      tilesDone: var_tilesDone,
+      totalTiles: var_totalTiles,
+      bytesWritten: var_bytesWritten,
+      elapsedMs: var_elapsedMs,
+      error: var_error,
+      startedMs: var_startedMs,
+      finishedMs: var_finishedMs,
+    );
+  }
+
+  @protected
   Resample sse_decode_resample(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
@@ -1078,6 +1347,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_scheme = sse_decode_scheme(deserializer);
     var var_alpha = sse_decode_alpha_mode(deserializer);
     var var_resample = sse_decode_resample(deserializer);
+    var var_skipEmpty = sse_decode_bool(deserializer);
+    var var_mercator = sse_decode_bool(deserializer);
     return TaskConfig(
       source: var_source,
       output: var_output,
@@ -1087,6 +1358,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       scheme: var_scheme,
       alpha: var_alpha,
       resample: var_resample,
+      skipEmpty: var_skipEmpty,
+      mercator: var_mercator,
     );
   }
 
@@ -1372,6 +1645,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_rec(List<Rec> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_rec(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_task_dto(List<TaskDto> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
@@ -1401,6 +1683,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_pyramid_estimate(
+    PyramidEstimate self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_box_autoadd_u_32(self.nativeZoom, serializer);
+    sse_encode_list_level_estimate(self.levels, serializer);
+  }
+
+  @protected
+  void sse_encode_rec(Rec self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.id, serializer);
+    sse_encode_String(self.source, serializer);
+    sse_encode_String(self.output, serializer);
+    sse_encode_u_32(self.tileSize, serializer);
+    sse_encode_scheme(self.scheme, serializer);
+    sse_encode_alpha_mode(self.alpha, serializer);
+    sse_encode_resample(self.resample, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.zmin, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.zmax, serializer);
+    sse_encode_bool(self.skipEmpty, serializer);
+    sse_encode_bool(self.mercator, serializer);
+    sse_encode_String(self.status, serializer);
+    sse_encode_u_32(self.level, serializer);
+    sse_encode_u_64(self.tilesDone, serializer);
+    sse_encode_u_64(self.totalTiles, serializer);
+    sse_encode_u_64(self.bytesWritten, serializer);
+    sse_encode_u_64(self.elapsedMs, serializer);
+    sse_encode_opt_String(self.error, serializer);
+    sse_encode_u_64(self.startedMs, serializer);
+    sse_encode_u_64(self.finishedMs, serializer);
+  }
+
+  @protected
   void sse_encode_resample(Resample self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
@@ -1423,6 +1740,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_scheme(self.scheme, serializer);
     sse_encode_alpha_mode(self.alpha, serializer);
     sse_encode_resample(self.resample, serializer);
+    sse_encode_bool(self.skipEmpty, serializer);
+    sse_encode_bool(self.mercator, serializer);
   }
 
   @protected

@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 496347766;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1147638376;
 
 // Section: executor
 
@@ -127,6 +127,55 @@ fn wire__crate__api__task_api__estimate_pyramid_impl(
         },
     )
 }
+fn wire__crate__api__task_api__estimate_pyramid_ex_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "estimate_pyramid_ex",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source = <String>::sse_decode(&mut deserializer);
+            let api_width = <u32>::sse_decode(&mut deserializer);
+            let api_height = <u32>::sse_decode(&mut deserializer);
+            let api_tile_size = <u32>::sse_decode(&mut deserializer);
+            let api_zmin = <Option<u32>>::sse_decode(&mut deserializer);
+            let api_zmax = <Option<u32>>::sse_decode(&mut deserializer);
+            let api_mercator = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::task_api::estimate_pyramid_ex(
+                            api_source,
+                            api_width,
+                            api_height,
+                            api_tile_size,
+                            api_zmin,
+                            api_zmax,
+                            api_mercator,
+                        )?;
+                        std::result::Result::Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__task_api__get_max_concurrency_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -188,6 +237,40 @@ fn wire__crate__api__simple__greet_impl(
                 let output_ok = Ok::<_, ()>(crate::api::simple::greet(api_name))?;
                 std::result::Result::Ok(output_ok)
             })())
+        },
+    )
+}
+fn wire__crate__api__history_store__init_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "init",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>({
+                        crate::api::history_store::init();
+                    })?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
         },
     )
 }
@@ -255,6 +338,38 @@ fn wire__crate__api__task_api__list_tasks_impl(
                         std::result::Result::Ok(output_ok)
                     })(),
                 )
+            }
+        },
+    )
+}
+fn wire__crate__api__history_store__load_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "load",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::history_store::load())?;
+                    std::result::Result::Ok(output_ok)
+                })())
             }
         },
     )
@@ -469,6 +584,41 @@ fn wire__crate__api__task_api__sample_pixel_impl(
                         std::result::Result::Ok(output_ok)
                     })(),
                 )
+            }
+        },
+    )
+}
+fn wire__crate__api__history_store__save_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "save",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_recs = <Vec<crate::api::history_store::Rec>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>({
+                        crate::api::history_store::save(&api_recs);
+                    })?;
+                    std::result::Result::Ok(output_ok)
+                })())
             }
         },
     )
@@ -746,6 +896,18 @@ impl SseDecode for Vec<u8> {
     }
 }
 
+impl SseDecode for Vec<crate::api::history_store::Rec> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::history_store::Rec>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::task_api::TaskDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -777,6 +939,66 @@ impl SseDecode for Option<u32> {
         } else {
             return None;
         }
+    }
+}
+
+impl SseDecode for crate::api::task_api::PyramidEstimate {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_nativeZoom = <Option<u32>>::sse_decode(deserializer);
+        let mut var_levels = <Vec<crate::api::task_api::LevelEstimate>>::sse_decode(deserializer);
+        return crate::api::task_api::PyramidEstimate {
+            native_zoom: var_nativeZoom,
+            levels: var_levels,
+        };
+    }
+}
+
+impl SseDecode for crate::api::history_store::Rec {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <u64>::sse_decode(deserializer);
+        let mut var_source = <String>::sse_decode(deserializer);
+        let mut var_output = <String>::sse_decode(deserializer);
+        let mut var_tileSize = <u32>::sse_decode(deserializer);
+        let mut var_scheme = <crate::engine::planner::Scheme>::sse_decode(deserializer);
+        let mut var_alpha = <crate::engine::alpha::AlphaMode>::sse_decode(deserializer);
+        let mut var_resample = <crate::engine::planner::Resample>::sse_decode(deserializer);
+        let mut var_zmin = <Option<u32>>::sse_decode(deserializer);
+        let mut var_zmax = <Option<u32>>::sse_decode(deserializer);
+        let mut var_skipEmpty = <bool>::sse_decode(deserializer);
+        let mut var_mercator = <bool>::sse_decode(deserializer);
+        let mut var_status = <String>::sse_decode(deserializer);
+        let mut var_level = <u32>::sse_decode(deserializer);
+        let mut var_tilesDone = <u64>::sse_decode(deserializer);
+        let mut var_totalTiles = <u64>::sse_decode(deserializer);
+        let mut var_bytesWritten = <u64>::sse_decode(deserializer);
+        let mut var_elapsedMs = <u64>::sse_decode(deserializer);
+        let mut var_error = <Option<String>>::sse_decode(deserializer);
+        let mut var_startedMs = <u64>::sse_decode(deserializer);
+        let mut var_finishedMs = <u64>::sse_decode(deserializer);
+        return crate::api::history_store::Rec {
+            id: var_id,
+            source: var_source,
+            output: var_output,
+            tile_size: var_tileSize,
+            scheme: var_scheme,
+            alpha: var_alpha,
+            resample: var_resample,
+            zmin: var_zmin,
+            zmax: var_zmax,
+            skip_empty: var_skipEmpty,
+            mercator: var_mercator,
+            status: var_status,
+            level: var_level,
+            tiles_done: var_tilesDone,
+            total_tiles: var_totalTiles,
+            bytes_written: var_bytesWritten,
+            elapsed_ms: var_elapsedMs,
+            error: var_error,
+            started_ms: var_startedMs,
+            finished_ms: var_finishedMs,
+        };
     }
 }
 
@@ -815,6 +1037,8 @@ impl SseDecode for crate::api::task_api::TaskConfig {
         let mut var_scheme = <crate::engine::planner::Scheme>::sse_decode(deserializer);
         let mut var_alpha = <crate::engine::alpha::AlphaMode>::sse_decode(deserializer);
         let mut var_resample = <crate::engine::planner::Resample>::sse_decode(deserializer);
+        let mut var_skipEmpty = <bool>::sse_decode(deserializer);
+        let mut var_mercator = <bool>::sse_decode(deserializer);
         return crate::api::task_api::TaskConfig {
             source: var_source,
             output: var_output,
@@ -824,6 +1048,8 @@ impl SseDecode for crate::api::task_api::TaskConfig {
             scheme: var_scheme,
             alpha: var_alpha,
             resample: var_resample,
+            skip_empty: var_skipEmpty,
+            mercator: var_mercator,
         };
     }
 }
@@ -986,21 +1212,27 @@ fn pde_ffi_dispatcher_primary_impl(
         1 => wire__crate__api__task_api__cancel_task_impl(port, ptr, rust_vec_len, data_len),
         2 => wire__crate__api__task_api__estimate_pyramid_impl(port, ptr, rust_vec_len, data_len),
         3 => {
+            wire__crate__api__task_api__estimate_pyramid_ex_impl(port, ptr, rust_vec_len, data_len)
+        }
+        4 => {
             wire__crate__api__task_api__get_max_concurrency_impl(port, ptr, rust_vec_len, data_len)
         }
-        5 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__task_api__list_tasks_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__task_api__make_preview_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__task_api__pause_task_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__task_api__read_image_info_impl(port, ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__task_api__remove_task_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__task_api__resume_task_impl(port, ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__task_api__sample_pixel_impl(port, ptr, rust_vec_len, data_len),
-        13 => {
+        6 => wire__crate__api__history_store__init_impl(port, ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__task_api__list_tasks_impl(port, ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__history_store__load_impl(port, ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__task_api__make_preview_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__task_api__pause_task_impl(port, ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__task_api__read_image_info_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__task_api__remove_task_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__task_api__resume_task_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__task_api__sample_pixel_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__history_store__save_impl(port, ptr, rust_vec_len, data_len),
+        17 => {
             wire__crate__api__task_api__set_max_concurrency_impl(port, ptr, rust_vec_len, data_len)
         }
-        14 => wire__crate__api__task_api__start_task_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__task_api__subscribe_events_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__task_api__start_task_impl(port, ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__task_api__subscribe_events_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1013,7 +1245,7 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        4 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1107,6 +1339,66 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::task_api::LevelEstimate>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::task_api::PyramidEstimate {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.native_zoom.into_into_dart().into_dart(),
+            self.levels.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::task_api::PyramidEstimate
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::task_api::PyramidEstimate>
+    for crate::api::task_api::PyramidEstimate
+{
+    fn into_into_dart(self) -> crate::api::task_api::PyramidEstimate {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::history_store::Rec {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.source.into_into_dart().into_dart(),
+            self.output.into_into_dart().into_dart(),
+            self.tile_size.into_into_dart().into_dart(),
+            self.scheme.into_into_dart().into_dart(),
+            self.alpha.into_into_dart().into_dart(),
+            self.resample.into_into_dart().into_dart(),
+            self.zmin.into_into_dart().into_dart(),
+            self.zmax.into_into_dart().into_dart(),
+            self.skip_empty.into_into_dart().into_dart(),
+            self.mercator.into_into_dart().into_dart(),
+            self.status.into_into_dart().into_dart(),
+            self.level.into_into_dart().into_dart(),
+            self.tiles_done.into_into_dart().into_dart(),
+            self.total_tiles.into_into_dart().into_dart(),
+            self.bytes_written.into_into_dart().into_dart(),
+            self.elapsed_ms.into_into_dart().into_dart(),
+            self.error.into_into_dart().into_dart(),
+            self.started_ms.into_into_dart().into_dart(),
+            self.finished_ms.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::history_store::Rec
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::history_store::Rec>
+    for crate::api::history_store::Rec
+{
+    fn into_into_dart(self) -> crate::api::history_store::Rec {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::engine::planner::Resample {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
@@ -1160,6 +1452,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::task_api::TaskConfig {
             self.scheme.into_into_dart().into_dart(),
             self.alpha.into_into_dart().into_dart(),
             self.resample.into_into_dart().into_dart(),
+            self.skip_empty.into_into_dart().into_dart(),
+            self.mercator.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1428,6 +1722,16 @@ impl SseEncode for Vec<u8> {
     }
 }
 
+impl SseEncode for Vec<crate::api::history_store::Rec> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::history_store::Rec>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::task_api::TaskDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1455,6 +1759,40 @@ impl SseEncode for Option<u32> {
         if let Some(value) = self {
             <u32>::sse_encode(value, serializer);
         }
+    }
+}
+
+impl SseEncode for crate::api::task_api::PyramidEstimate {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Option<u32>>::sse_encode(self.native_zoom, serializer);
+        <Vec<crate::api::task_api::LevelEstimate>>::sse_encode(self.levels, serializer);
+    }
+}
+
+impl SseEncode for crate::api::history_store::Rec {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u64>::sse_encode(self.id, serializer);
+        <String>::sse_encode(self.source, serializer);
+        <String>::sse_encode(self.output, serializer);
+        <u32>::sse_encode(self.tile_size, serializer);
+        <crate::engine::planner::Scheme>::sse_encode(self.scheme, serializer);
+        <crate::engine::alpha::AlphaMode>::sse_encode(self.alpha, serializer);
+        <crate::engine::planner::Resample>::sse_encode(self.resample, serializer);
+        <Option<u32>>::sse_encode(self.zmin, serializer);
+        <Option<u32>>::sse_encode(self.zmax, serializer);
+        <bool>::sse_encode(self.skip_empty, serializer);
+        <bool>::sse_encode(self.mercator, serializer);
+        <String>::sse_encode(self.status, serializer);
+        <u32>::sse_encode(self.level, serializer);
+        <u64>::sse_encode(self.tiles_done, serializer);
+        <u64>::sse_encode(self.total_tiles, serializer);
+        <u64>::sse_encode(self.bytes_written, serializer);
+        <u64>::sse_encode(self.elapsed_ms, serializer);
+        <Option<String>>::sse_encode(self.error, serializer);
+        <u64>::sse_encode(self.started_ms, serializer);
+        <u64>::sse_encode(self.finished_ms, serializer);
     }
 }
 
@@ -1501,6 +1839,8 @@ impl SseEncode for crate::api::task_api::TaskConfig {
         <crate::engine::planner::Scheme>::sse_encode(self.scheme, serializer);
         <crate::engine::alpha::AlphaMode>::sse_encode(self.alpha, serializer);
         <crate::engine::planner::Resample>::sse_encode(self.resample, serializer);
+        <bool>::sse_encode(self.skip_empty, serializer);
+        <bool>::sse_encode(self.mercator, serializer);
     }
 }
 

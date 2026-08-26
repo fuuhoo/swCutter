@@ -25,6 +25,8 @@ fn sample(id: u64) -> Rec {
         resample: Resample::Nearest,
         zmin: Some(1),
         zmax: Some(9),
+        skip_empty: false,
+        mercator: true,
         status: "done".into(),
         level: 9,
         tiles_done: 100,
