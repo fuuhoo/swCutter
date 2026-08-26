@@ -110,8 +110,8 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
 <html lang="zh-CN"><head><meta charset="utf-8">
 <title>swCutter 瓦片预览</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="./leaflet.css">
+<script src="./leaflet.js"></script>
 <style>
  html,body{margin:0;height:100%;background:#0d1117}
  #map{position:absolute;inset:0}
@@ -249,9 +249,29 @@ try {
 
 
     let html = html.replace("__CFG__", &cfg_str);
+    write_static_assets(out)?;
     let p = out.join(PREVIEW_HTML_NAME);
     let mut f = fs::File::create(&p).map_err(|e| io_err(p.display().to_string(), e))?;
     f.write_all(html.as_bytes())
         .map_err(|e| io_err(p.display().to_string(), e))?;
+    Ok(())
+}
+
+/// 本地内嵌 Leaflet（离线可用，杜绝 CDN 白屏）。
+static LEAFLET_JS: &str = include_str!("leaflet_assets/leaflet.js");
+static LEAFLET_CSS: &str = include_str!("leaflet_assets/leaflet.css");
+
+fn write_static_assets(out: &Path) -> CoreResult<()> {
+    let js_path = out.join("leaflet.js");
+    let css_path = out.join("leaflet.css");
+    let need = |p: &Path, content: &str| -> bool {
+        !p.exists() || std::fs::read_to_string(p).map(|s| s != content).unwrap_or(true)
+    };
+    if need(&js_path, LEAFLET_JS) {
+        std::fs::write(&js_path, LEAFLET_JS).map_err(|e| io_err(js_path.display().to_string(), e))?;
+    }
+    if need(&css_path, LEAFLET_CSS) {
+        std::fs::write(&css_path, LEAFLET_CSS).map_err(|e| io_err(css_path.display().to_string(), e))?;
+    }
     Ok(())
 }

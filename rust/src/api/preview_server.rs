@@ -43,6 +43,8 @@ fn content_type(p: &Path) -> &'static str {
         Some(s) if s == "html" => "text/html; charset=utf-8",
         Some(s) if s == "png" => "image/png",
         Some(s) if s == "json" => "application/json",
+        Some(s) if s == "js" => "text/javascript",
+        Some(s) if s == "css" => "text/css",
         Some(s) if s == "jpg" || s == "jpeg" => "image/jpeg",
         Some(s) if s == "webp" => "image/webp",
         _ => "application/octet-stream",
