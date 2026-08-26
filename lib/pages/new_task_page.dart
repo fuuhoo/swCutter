@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -182,6 +183,12 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
       if (ok != true) return;
     }
     final failures = <String>[];
+    // 预览底图配置：全局设置注入每个 preview.html（天地图模板自动带上 tk）
+    final overlaysJson = jsonEncode(app.baseMaps.map((m) {
+      final e = Map<String, dynamic>.from(m);
+      if ((e['tpl'] as String).contains('{tk}')) e['tk'] = app.tiandituTk;
+      return e;
+    }).toList());
     for (final d in List<TaskDraft>.from(store.drafts)) {
       try {
         // 全局设置同步（瓦片尺寸/跳过透明/重采样在「设置」页维护）
@@ -190,7 +197,8 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
         d.resample = app.resample;
         final id = await store.startDraft(d,
             outputOverride:
-                app.defaultOutput.isNotEmpty ? d.outputDir : null);
+                app.defaultOutput.isNotEmpty ? d.outputDir : null,
+            previewOverlays: overlaysJson);
         // 本地立即登记，任务中心即时可见（后续事件按此 id 更新）
         app.addLocalTask(id, d.toConfig(d.outputDir));
       } catch (e) {

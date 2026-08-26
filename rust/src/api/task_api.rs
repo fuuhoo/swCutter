@@ -31,6 +31,8 @@ pub struct TaskConfig {
     pub skip_empty: bool,
     /// true = GDAL mercator 绝对级别模式（要求 GeoTIFF）
     pub mercator: bool,
+    /// 预览页底图/叠加层（JSON 数组字符串；None=空）
+    pub preview_overlays: Option<String>,
 }
 
 /// 图像元信息 + 默认金字塔估算。
@@ -246,6 +248,7 @@ fn load_history(mgr: &Manager) {
                 resample: r.resample,
                 skip_empty: r.skip_empty,
                 mercator: r.mercator,
+                preview_overlays: None,
             },
             status: Mutex::new(status),
             cancel: AtomicBool::new(true),
@@ -677,6 +680,7 @@ fn worker(entry: Arc<TaskEntry>) {
         resample: entry.cfg.resample,
         skip_empty: entry.cfg.skip_empty,
         mercator: entry.cfg.mercator,
+        preview_overlays: entry.cfg.preview_overlays.clone(),
     };
 
     let entry2 = Arc::clone(&entry);

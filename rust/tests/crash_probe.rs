@@ -35,6 +35,7 @@ fn probe_start_task_chain() {
         resample: Resample::Bilinear,
             skip_empty: false,
             mercator: false,
+            preview_overlays: None,
     };
     let id = start_task(cfg).expect("start_task failed");
     println!("started id={id}");

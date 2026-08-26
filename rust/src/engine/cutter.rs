@@ -32,6 +32,8 @@ pub struct CutParams {
     pub skip_empty: bool,
     /// true = GDAL mercator 绝对级别模式（要求 GeoTIFF 地理参考，zmax 截断 native）
     pub mercator: bool,
+    /// 预览页底图/叠加层配置（JSON 数组字符串，来自全局设置；None=默认空）
+    pub preview_overlays: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -509,6 +511,7 @@ pub fn run_cut_with_control(
                 height: l.height,
                 tiles: l.tiles,
             }).collect(),
+            overlays_json: params.preview_overlays.clone().unwrap_or_default(),
         };
         if let Err(e) = writer::write_preview_html(&params.output, &pv) {
             summary.errors.push(format!("preview.html 生成失败: {e}"));
@@ -1018,6 +1021,7 @@ mod tests {
             resample: Resample::Nearest,
             skip_empty: false,
             mercator: false,
+            preview_overlays: None,
         };
         let sum = run_cut(&params, noop_sink());
         assert!(sum.errors.is_empty(), "errors: {:?}", sum.errors);
@@ -1101,6 +1105,7 @@ mod tests {
             resample: Resample::Bilinear,
             skip_empty: false,
             mercator: false,
+            preview_overlays: None,
         };
         let sum = run_cut(&params, noop_sink());
         assert!(sum.errors.is_empty(), "{:?}", sum.errors);
@@ -1135,6 +1140,7 @@ mod tests {
             resample: Resample::Nearest,
             skip_empty: false,
             mercator: false,
+            preview_overlays: None,
         };
 
         // 首次完整切片

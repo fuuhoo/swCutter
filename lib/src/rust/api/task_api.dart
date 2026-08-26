@@ -227,6 +227,9 @@ class TaskConfig {
   /// true = GDAL mercator 绝对级别模式（要求 GeoTIFF）
   final bool mercator;
 
+  /// 预览页底图/叠加层（JSON 数组字符串；None=空）
+  final String? previewOverlays;
+
   const TaskConfig({
     required this.source,
     required this.output,
@@ -238,6 +241,7 @@ class TaskConfig {
     required this.resample,
     required this.skipEmpty,
     required this.mercator,
+    this.previewOverlays,
   });
 
   @override
@@ -251,7 +255,8 @@ class TaskConfig {
       alpha.hashCode ^
       resample.hashCode ^
       skipEmpty.hashCode ^
-      mercator.hashCode;
+      mercator.hashCode ^
+      previewOverlays.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -267,7 +272,8 @@ class TaskConfig {
           alpha == other.alpha &&
           resample == other.resample &&
           skipEmpty == other.skipEmpty &&
-          mercator == other.mercator;
+          mercator == other.mercator &&
+          previewOverlays == other.previewOverlays;
 }
 
 /// 任务列表条目快照。

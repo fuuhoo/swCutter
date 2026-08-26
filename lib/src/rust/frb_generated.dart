@@ -940,8 +940,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConfig dco_decode_task_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return TaskConfig(
       source: dco_decode_String(arr[0]),
       output: dco_decode_String(arr[1]),
@@ -953,6 +953,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       resample: dco_decode_resample(arr[7]),
       skipEmpty: dco_decode_bool(arr[8]),
       mercator: dco_decode_bool(arr[9]),
+      previewOverlays: dco_decode_opt_String(arr[10]),
     );
   }
 
@@ -1350,6 +1351,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_resample = sse_decode_resample(deserializer);
     var var_skipEmpty = sse_decode_bool(deserializer);
     var var_mercator = sse_decode_bool(deserializer);
+    var var_previewOverlays = sse_decode_opt_String(deserializer);
     return TaskConfig(
       source: var_source,
       output: var_output,
@@ -1361,6 +1363,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       resample: var_resample,
       skipEmpty: var_skipEmpty,
       mercator: var_mercator,
+      previewOverlays: var_previewOverlays,
     );
   }
 
@@ -1745,6 +1748,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_resample(self.resample, serializer);
     sse_encode_bool(self.skipEmpty, serializer);
     sse_encode_bool(self.mercator, serializer);
+    sse_encode_opt_String(self.previewOverlays, serializer);
   }
 
   @protected

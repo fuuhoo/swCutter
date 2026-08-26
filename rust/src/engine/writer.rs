@@ -71,10 +71,14 @@ pub struct PreviewInfo {
     pub zmax: u32,
     pub tms: bool,
     pub levels: Vec<ManifestLevel>,
+    /// 预置底图/叠加层（JSON 数组，来自全局设置）
+    pub overlays_json: String,
 }
 
 /// 生成本地零依赖的瓦片浏览器查看页（vanilla JS，离线可用）。
 pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
+    let overlays: serde_json::Value = serde_json::from_str(&info.overlays_json)
+        .unwrap_or_else(|_| serde_json::json!([]));
     let cfg = serde_json::json!({
         "w": info.source_w,
         "h": info.source_h,
@@ -82,6 +86,7 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
         "zmin": info.zmin,
         "zmax": info.zmax,
         "tms": info.tms,
+        "overlays": overlays,
         "levels": info.levels.iter().map(|l| serde_json::json!({
             "z": l.level, "w": l.width, "h": l.height,
             "tx": (l.width as f64 / info.tile_size as f64).ceil() as u64,
@@ -105,8 +110,9 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
  #zoom{min-width:64px;text-align:center;font-variant-numeric:tabular-nums;color:#9fb0cc;font-size:12px}
  #map{position:absolute;inset:46px 0 0 0;cursor:grab}
  #map.drag{cursor:grabbing}
- img.tile{position:absolute;image-rendering:auto;-webkit-user-drag:none;user-select:none}
- img.ov{position:absolute;pointer-events:none;-webkit-user-drag:none}
+ img.tile{position:absolute;image-rendering:auto;-webkit-user-drag:none;user-select:none;z-index:3}
+ img.ov{position:absolute;pointer-events:none;-webkit-user-drag:none;z-index:6}
+ img.ovb{z-index:1;background:#0d1117}
  #hint{position:absolute;right:12px;bottom:10px;font-size:11px;color:#7a8699}
  #panel{position:absolute;top:50px;right:10px;width:min(430px,92vw);max-height:70vh;overflow:auto;
         background:#171c26f2;border:1px solid #ffffff20;border-radius:12px;padding:12px;z-index:50;
@@ -159,6 +165,8 @@ document.getElementById('badge').style.cssText='font-size:12px;font-weight:700;c
 let scale = 1, cx = CFG.w/2, cy = CFG.h/2;
 const cache = new Set();
 const imgs = [];
+// 前置声明：apply() 首帧（fit→apply）就会触达这些绑定，必须先于调用点初始化
+let curL=null; let tsGuard=0; let ovImgs=[];
 
 function lvlMeta(){ 
   const want = Math.round(CFG.zmax - Math.log2(scale));
@@ -232,8 +240,13 @@ fit();
 
 /* ---------------- 在线叠加图层 ---------------- */
 const LS_KEY='swcutter_overlays', LS_TK='swcutter_tk';
-let overlays = [];
-try{ overlays = JSON.parse(localStorage.getItem(LS_KEY)||'[]'); }catch(e){ overlays=[]; }
+// 全局设置(CFG.overlays)优先；本页 localStorage 修改仅作回退/临时覆盖
+const cfgOv = Array.isArray(CFG.overlays) ? JSON.parse(JSON.stringify(CFG.overlays)) : [];
+let overlays = cfgOv;
+try{
+  const parsed = JSON.parse(localStorage.getItem(LS_KEY)||'null');
+  if(!(cfgOv.length) && Array.isArray(parsed)) overlays = parsed;
+}catch(e){}
 const tkInput=document.getElementById('tkInput');
 tkInput.value = localStorage.getItem(LS_TK)||'';
 document.getElementById('saveTk').onclick=()=>{ localStorage.setItem(LS_TK, tkInput.value.trim()); renderOvList(); };
@@ -282,13 +295,9 @@ function renderOvList(){
   list.querySelectorAll('button[data-act=del]').forEach(el=>el.onclick=e=>{overlays.splice(+e.target.dataset.i,1);saveOverlays();});
   list.querySelectorAll('button[data-act=up]').forEach(el=>el.onclick=e=>{const o=overlays[+e.target.dataset.i];o.on=!o.on;saveOverlays();});
 }
-// 仅更新透明度不重取瓦片
-function applySoft(){ const k=scale*Math.pow(2,CFG.zmax-curL.z);
+function applySoft(){ if(!curL) return;
   for(const el of ovImgs){ const o=overlays[el._ovi]; if(o) el.style.opacity=o.opacity; } }
 
-let curL=null;
-let tsGuard=0;
-let ovImgs=[];
 function drawOverlays(L,left,top,vw,vh,k){
   for(const el of ovImgs) el.remove(); ovImgs.length=0;
   curL=L;
@@ -298,8 +307,9 @@ function drawOverlays(L,left,top,vw,vh,k){
   const lx0=Math.max(0, Math.floor(left/CFG.t)), ly0=Math.max(0, Math.floor(top/CFG.t));
   overlays.forEach((o,oi)=>{
     if(!o.on) return;
-    let tpl=o.tpl.replace('{tk}', localStorage.getItem(LS_TK)||'');
-    if(tpl.includes('{tk}')&&!localStorage.getItem(LS_TK)) return; // 无密钥不请求
+    const tkv = localStorage.getItem(LS_TK) || o.tk || '';
+    let tpl=o.tpl.replace(/\{tk\}/g, tkv);
+    if(tpl.includes('{tk}')) return; // 无密钥不请求
     const oz=Math.max(o.zmin??0, Math.min(o.zmax??22, L.z));
     const flip=o.tms? (Math.pow(2,oz)-1):null;
     for(let ty=ly0; ty<ly1e; ty++){
@@ -308,7 +318,7 @@ function drawOverlays(L,left,top,vw,vh,k){
         let url=tpl.replace('{z}',oz).replace('{x}',tx).replace('{y}',oy);
         if(o.subs&&o.subs.length){ url=url.replace('{s}', o.subs[(tx+ty)%o.subs.length]); }
         const img=new Image();
-        img.className='ov';
+        img.className = o.below ? 'ov ovb' : 'ov';
         img.style.left=(tx*CFG.t-left)*scale+'px';
         img.style.top=(ty*CFG.t-top)*scale+'px';
         img.style.width=(CFG.t*k+1)+'px'; img.style.height=(CFG.t*k+1)+'px';

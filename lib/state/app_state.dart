@@ -32,6 +32,17 @@ class AppState extends ChangeNotifier {
   bool skipEmpty = false;
   /// 全局重采样方式
   Resample resample = Resample.bilinear;
+  /// 天地图 tk 密钥（预览底图用）
+  String tiandituTk = '';
+  /// 预览底图/叠加层（写入每个 preview.html 的 CFG.overlays）
+  List<Map<String, dynamic>> baseMaps = [
+    {
+      'name': 'OpenStreetMap',
+      'tpl': 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      'subs': '', 'tms': false, 'on': true, 'below': true,
+      'opacity': 1.0, 'zmin': 2, 'zmax': 19,
+    },
+  ];
 
   bool settingsLoaded = false;
 
@@ -46,6 +57,11 @@ class AppState extends ChangeNotifier {
         tileSize = (j['tileSize'] as num?)?.toInt() ?? 256;
         skipEmpty = (j['skipEmpty'] as bool?) ?? false;
         resample = (j['resample'] as int?) == 0 ? Resample.nearest : Resample.bilinear;
+        tiandituTk = (j['tiandituTk'] as String?) ?? '';
+        final bm = j['baseMaps'];
+        if (bm is List && bm.isNotEmpty) {
+          baseMaps = bm.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        }
       }
       settingsLoaded = true;
       notifyListeners();
@@ -65,6 +81,8 @@ class AppState extends ChangeNotifier {
         'tileSize': tileSize,
         'skipEmpty': skipEmpty,
         'resample': resample == Resample.nearest ? 0 : 1,
+        'tiandituTk': tiandituTk,
+        'baseMaps': baseMaps,
       }));
     } catch (_) {}
   }
@@ -315,7 +333,8 @@ class TaskDraft {
     zmax = maxLevel;
   }
 
-  api.TaskConfig toConfig(String outputDir) => api.TaskConfig(
+  api.TaskConfig toConfig(String outputDir, {String? previewOverlays}) =>
+      api.TaskConfig(
         source: source,
         output: outputDir,
         tileSize: tileSize,
@@ -326,6 +345,7 @@ class TaskDraft {
         resample: resample,
         skipEmpty: skipEmpty,
         mercator: mercator,
+        previewOverlays: previewOverlays,
       );
 }
 
@@ -406,11 +426,13 @@ class DraftStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<int> startDraft(TaskDraft d, {String? outputOverride}) async {
+  Future<int> startDraft(TaskDraft d,
+      {String? outputOverride, String? previewOverlays}) async {
     final out = (outputOverride ?? d.outputDir).trim();
     if (out.isEmpty) throw Exception('请先选择输出目录');
     d.outputDir = out;
-    final id = await api.startTask(cfg: d.toConfig(out));
+    final id =
+        await api.startTask(cfg: d.toConfig(out, previewOverlays: previewOverlays));
     return id.toInt();
   }
 }

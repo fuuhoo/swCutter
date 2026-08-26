@@ -1039,6 +1039,7 @@ impl SseDecode for crate::api::task_api::TaskConfig {
         let mut var_resample = <crate::engine::planner::Resample>::sse_decode(deserializer);
         let mut var_skipEmpty = <bool>::sse_decode(deserializer);
         let mut var_mercator = <bool>::sse_decode(deserializer);
+        let mut var_previewOverlays = <Option<String>>::sse_decode(deserializer);
         return crate::api::task_api::TaskConfig {
             source: var_source,
             output: var_output,
@@ -1050,6 +1051,7 @@ impl SseDecode for crate::api::task_api::TaskConfig {
             resample: var_resample,
             skip_empty: var_skipEmpty,
             mercator: var_mercator,
+            preview_overlays: var_previewOverlays,
         };
     }
 }
@@ -1456,6 +1458,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::task_api::TaskConfig {
             self.resample.into_into_dart().into_dart(),
             self.skip_empty.into_into_dart().into_dart(),
             self.mercator.into_into_dart().into_dart(),
+            self.preview_overlays.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1845,6 +1848,7 @@ impl SseEncode for crate::api::task_api::TaskConfig {
         <crate::engine::planner::Resample>::sse_encode(self.resample, serializer);
         <bool>::sse_encode(self.skip_empty, serializer);
         <bool>::sse_encode(self.mercator, serializer);
+        <Option<String>>::sse_encode(self.preview_overlays, serializer);
     }
 }
 
