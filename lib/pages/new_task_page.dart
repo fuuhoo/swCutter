@@ -153,6 +153,20 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
   Future<void> _startAll() async {
     final store = ref.read(draftProvider);
     final app = ref.read(appProvider);
+    // 前置校验：预计瓦片总量超限时拒绝（与 Rust 端上限一致）
+    const maxTiles = 8000000;
+    for (final d in store.drafts) {
+      final total = d.estimates?.fold<int>(0, (a, e) => a + e.tiles.toInt()) ?? 0;
+      if (total > maxTiles) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                  '${d.fileName}：级别范围预计 $total 块瓦片，超过 $maxTiles 上限。\n请缩小级别范围或降低放大倍数。'),
+              duration: const Duration(seconds: 4)));
+        }
+        return;
+      }
+    }
     final failures = <String>[];
     for (final d in List<TaskDraft>.from(store.drafts)) {
       try {

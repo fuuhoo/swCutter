@@ -24,6 +24,9 @@ pub struct LevelPlan {
 /// 级别硬上限（对齐主流切片工具：0–22 自由设置）
 pub const MAX_LEVEL_CAP: u32 = 22;
 
+/// 单任务瓦片总量保护：超出直接拒绝（防止误设级别导致内存分配崩溃）
+pub const MAX_TOTAL_TILES: u64 = 8_000_000;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PyramidPlan {
     pub image_width: u32,
@@ -113,6 +116,21 @@ pub fn plan(
     let zmin = req_min;
     let zmax = req_max.min(MAX_LEVEL_CAP).max(zmin);
 
+    // 先估算总量，超限直接拒绝（避免下游巨型分配导致进程崩溃）
+    {
+        let mut total: u64 = 0;
+        for level in zmin..=zmax {
+            let (w, h) = level_dims(image_width, image_height, level, max_level);
+            total += ((w + tile_size - 1) / tile_size) as u64
+                * ((h + tile_size - 1) / tile_size) as u64;
+            if total > MAX_TOTAL_TILES {
+                return Err(CoreError::InvalidInput(format!(
+                    "级别范围 [{zmin}, {zmax}] 预计瓦片数超过 {MAX_TOTAL_TILES} 上限，请缩小范围或降低放大倍数"
+                )));
+            }
+        }
+    }
+
     let mut levels = Vec::new();
     let mut total: u64 = 0;
     for level in zmin..=zmax {
@@ -180,25 +198,33 @@ mod tests {
             plan(100, 100, 256, Some(3), Some(1)),
             Err(CoreError::InvalidInput(_))
         ));
-        // clamp to hard cap 22
-        let p = plan(512, 512, 256, Some(0), Some(99)).unwrap();
-        assert_eq!(p.max_level_requested, MAX_LEVEL_CAP);
+        // 超大范围（拉满 22 级小图放大）→ 总量保护拒绝
+        assert!(matches!(
+            plan(512, 512, 256, Some(0), Some(99)),
+            Err(CoreError::InvalidInput(_))
+        ));
     }
 
     #[test]
     fn free_level_range_0_to_22() {
-        // 自由选择：zmin 可 >0，zmax 可到 22
-        let p = plan(4096, 4096, 256, Some(3), Some(22)).unwrap();
+        // 自由选择：zmin 可 >0，zmax 可超原始分辨率（总量在保护内）
+        // native(2048)=3；到 L9 = ×64 → 尺寸 131072，tiles 512² = 262144 < 上限
+        let p = plan(2048, 2048, 256, Some(3), Some(9)).unwrap();
         assert_eq!(p.min_level_requested, 3);
-        assert_eq!(p.max_level_requested, 22);
-        assert_eq!(p.levels.len(), 20);
-        // native = log2(4096/256)=4；L6 = ×4 放大
-        let l6 = p.levels.iter().find(|l| l.level == 6).unwrap();
-        assert_eq!((l6.width, l6.height), (16384, 16384));
-        assert!((l6.scale - 0.25).abs() < 1e-9);
-        // 上采样尺寸受 u32 保护不 panic（L22 = ×2^18）
-        let l22 = p.levels.last().unwrap();
-        assert!(l22.width >= 1 && l22.tiles_x >= 1);
+        assert_eq!(p.max_level_requested, 9);
+        let l9 = p.levels.last().unwrap();
+        assert_eq!((l9.width, l9.height), (131072, 131072));
+        assert!((l9.scale - 0.015625).abs() < 1e-9);
+        assert!(plan(2048, 2048, 256, Some(3), Some(22)).is_err());
+    }
+
+    #[test]
+    fn rejects_absurd_tile_totals() {
+        // 小图拉满 22 级 → 瓦片总量超限必须报错而非崩溃
+        let r = plan(512, 512, 256, Some(0), Some(22));
+        assert!(matches!(r, Err(CoreError::InvalidInput(_))));
+        // 正常范围不受影响
+        assert!(plan(4096, 4096, 256, Some(0), Some(10)).is_ok());
     }
 
     #[test]

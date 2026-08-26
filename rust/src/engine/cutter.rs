@@ -151,8 +151,9 @@ pub fn run_cut_with_control(
         return s;
     }
 
-    // ---- 任务列表（按级别升序） ----
-    let mut jobs = Vec::with_capacity(pyramid.total_tiles as usize);
+    // ---- 任务列表（按级别升序）----
+    // 不预分配 total 容量：即使上游校验被绕过也只会缓慢增长而非瞬间 OOM
+    let mut jobs: Vec<Job> = Vec::new();
     for (pi, lp) in pyramid.levels.iter().enumerate() {
         for ty in 0..lp.tiles_y {
             for tx in 0..lp.tiles_x {
