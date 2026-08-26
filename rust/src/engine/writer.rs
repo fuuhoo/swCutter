@@ -138,6 +138,17 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
 <script>
 const CFG = __CFG__;
 
+// ---- 运行诊断：任何异常都显示在页面上，避免白屏无法排查 ----
+function showErr(msg){
+  let el = document.getElementById('errBox');
+  if(!el){ el = document.createElement('div'); el.id='errBox';
+    el.style.cssText='position:absolute;left:10px;bottom:10px;right:10px;z-index:2000;background:#3a1010f2;color:#ffb4b4;border:1px solid #ff555555;border-radius:10px;padding:10px;font:12px/1.6 monospace;white-space:pre-wrap;max-height:40vh;overflow:auto';
+    document.body.appendChild(el); }
+  el.textContent = (el.textContent? el.textContent+'\n':'') + msg;
+}
+window.addEventListener('error', e => showErr('[error] '+e.message+' @'+(e.filename||'')+':'+(e.lineno||'?')));
+window.addEventListener('unhandledrejection', e => showErr('[promise] '+String(e.reason)));
+
 // ---- 世界网格 → 经纬度（EPSG:3857 XYZ/TMS 惯例）----
 function nn(z){ return Math.pow(2, z); }
 function tileLL(x, y, z){
@@ -151,6 +162,7 @@ if (typeof L === 'undefined') {
   document.getElementById('map').innerHTML =
     '<div class="offline">Leaflet 未能从 CDN 加载（离线？）。瓦片本身完好，可稍后重试或直接浏览 {z}/{x}/{y}.png 目录。</div>';
 } else {
+try {
   document.getElementById('badge').textContent =
     `Z${CFG.zmin}–Z${CFG.zmax} · ${CFG.tms?'TMS':'XYZ'} · ${CFG.t}px`;
 
@@ -160,7 +172,12 @@ if (typeof L === 'undefined') {
   // 瓦片包围盒的地理角点：SW=(左下) NE=(右上)；TMS 的 oy 即 XYZ 行号起点
   const swCorner = tileLL(bo.ox,        bo.oy + B.ty, B.z);
   const neCorner = tileLL(bo.ox + B.tx, bo.oy,        B.z);
-  const bbox = L.latLngBounds(swCorner, neCorner);
+  let bbox = L.latLngBounds(swCorner, neCorner);
+  if(!bbox.isValid() || Math.abs(bbox.getNorth()-bbox.getSouth()) < 1e-9){
+    // 边界无效（异常数据）→ 退回全球范围
+    bbox = L.latLngBounds([-85, -180], [85, 180]);
+    showErr('[warn] 瓦片包围盒无效，已退回全球范围: '+JSON.stringify({sw:swCorner,ne:neCorner}));
+  }
 
   const map = L.map('map', { zoomSnap: 0.25, zoomDelta: 0.5 });
   map.attributionControl.setPrefix('Leaflet');
@@ -176,7 +193,7 @@ if (typeof L === 'undefined') {
     bounds: bbox,
     attribution: 'swCutter'
   };
-  L.tileLayer('{z}/{x}/{y}.png', localOpts).addTo(map);
+  const local = L.tileLayer('{z}/{x}/{y}.png', localOpts).addTo(map);
 
   // ---- 在线图层（仅当设置启用了条目才会出现在 CFG.overlays）----
   const ovs = (CFG.overlays || []).filter(o => o && o.on && o.tpl);
@@ -219,6 +236,14 @@ if (typeof L === 'undefined') {
   L.control.scale({ imperial: false }).addTo(map);
   // ---- 主动定位到瓦片包围盒 ----
   map.fitBounds(bbox, { padding: [24, 24] });
+  // ---- 自检：首帧后若本地瓦片 0 张 → 提示（排查白屏）----
+  setTimeout(() => {
+    const n = Object.keys(local._tiles || {}).length;
+    if(!n) showErr('[warn] 首帧没有任何本地瓦片被请求。检查：输出目录是否含 {z}/{x}/{y}.png、CFG.levels 是否为空、URL 是否为 http(s) 访问。');
+  }, 1200);
+} catch(err){
+  showErr('[init] ' + (err && err.stack ? err.stack : String(err)));
+}
 }
 </script></body></html>"#;
 
