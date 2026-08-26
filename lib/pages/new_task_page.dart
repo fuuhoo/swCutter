@@ -52,6 +52,8 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
       );
       // 仅保留 GDAL 绝对级别模式
       draft.mercator = true;
+      // 级别下限 Z1（不生成 Z0）
+      draft.zmin = 1;
       // 全局设置同步
       draft.tileSize = app.tileSize;
       draft.skipEmpty = app.skipEmpty;
@@ -217,7 +219,7 @@ TaskDraft _dummyDraft() => TaskDraft(
       fileName: '',
       width: 0,
       height: 0,
-      maxLevel: 0,
+      maxLevel: 19,
     );
 
 class _FormColumn extends ConsumerWidget {
@@ -308,22 +310,26 @@ class _FormColumn extends ConsumerWidget {
 
         // ---- 级别范围 ----
         _SectionCard(title: '级别范围', icon: Icons.layers_rounded, children: [
-          RangeSlider(
-            values: RangeValues(
-                d.zmin < 1 ? 1 : d.zmin.toDouble(), d.zmax.toDouble()),
-            min: 1,
-            max: 22,
-            divisions: 21,
-            labels: RangeLabels('Z${d.zmin}', 'Z${d.zmax}'),
-            onChanged: locked
-                ? null
-                : (v) {
-                    active!.zmin = v.start.round().clamp(1, 22);
-                    active!.zmax = v.end.round();
-                    if (active!.zmax < active!.zmin) active!.zmax = active!.zmin;
-                    store.refreshEstimates(active!);
-                  },
-          ),
+          Builder(builder: (_) {
+            // 防御性钳制：保证 min ≤ start ≤ end ≤ max，避免 RangeSlider 断言崩溃
+            final sVal = d.zmin.clamp(1, 22).toDouble();
+            final eVal =
+                d.zmax < sVal ? sVal : d.zmax.clamp(sVal.toInt(), 22).toDouble();
+            return RangeSlider(
+              values: RangeValues(sVal, eVal),
+              min: 1,
+              max: 22,
+              divisions: 21,
+              labels: RangeLabels('Z${sVal.round()}', 'Z${eVal.round()}'),
+              onChanged: locked
+                  ? null
+                  : (v) {
+                      active!.zmin = v.start.round().clamp(1, 22);
+                      active!.zmax = v.end.round().clamp(active!.zmin, 22);
+                      store.refreshEstimates(active!);
+                    },
+            );
+          }),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
