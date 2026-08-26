@@ -929,8 +929,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Rec dco_decode_rec(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 20)
-      throw Exception('unexpected arr length: expect 20 but see ${arr.length}');
+    if (arr.length != 21)
+      throw Exception('unexpected arr length: expect 21 but see ${arr.length}');
     return Rec(
       id: dco_decode_u_64(arr[0]),
       source: dco_decode_String(arr[1]),
@@ -952,6 +952,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       error: dco_decode_opt_String(arr[17]),
       startedMs: dco_decode_u_64(arr[18]),
       finishedMs: dco_decode_u_64(arr[19]),
+      boundsJson: dco_decode_opt_String(arr[20]),
     );
   }
 
@@ -1337,6 +1338,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_error = sse_decode_opt_String(deserializer);
     var var_startedMs = sse_decode_u_64(deserializer);
     var var_finishedMs = sse_decode_u_64(deserializer);
+    var var_boundsJson = sse_decode_opt_String(deserializer);
     return Rec(
       id: var_id,
       source: var_source,
@@ -1358,6 +1360,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       error: var_error,
       startedMs: var_startedMs,
       finishedMs: var_finishedMs,
+      boundsJson: var_boundsJson,
     );
   }
 
@@ -1764,6 +1767,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.error, serializer);
     sse_encode_u_64(self.startedMs, serializer);
     sse_encode_u_64(self.finishedMs, serializer);
+    sse_encode_opt_String(self.boundsJson, serializer);
   }
 
   @protected

@@ -36,6 +36,7 @@ fn sample(id: u64) -> Rec {
         error: None,
         started_ms: 1_000,
         finished_ms: 43_000,
+        bounds_json: Some(r#"{"zmin":1,"zmax":9}"#.into()),
     }
 }
 

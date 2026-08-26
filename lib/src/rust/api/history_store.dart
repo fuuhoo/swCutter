@@ -49,6 +49,9 @@ class Rec {
   final BigInt startedMs;
   final BigInt finishedMs;
 
+  /// 瓦片边界（JSON：scheme/tile/zmin/zmax/levels[{z,ox,oy,tx,ty,wy}]）
+  final String? boundsJson;
+
   const Rec({
     required this.id,
     required this.source,
@@ -70,6 +73,7 @@ class Rec {
     this.error,
     required this.startedMs,
     required this.finishedMs,
+    this.boundsJson,
   });
 
   @override
@@ -93,7 +97,8 @@ class Rec {
       elapsedMs.hashCode ^
       error.hashCode ^
       startedMs.hashCode ^
-      finishedMs.hashCode;
+      finishedMs.hashCode ^
+      boundsJson.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -119,5 +124,6 @@ class Rec {
           elapsedMs == other.elapsedMs &&
           error == other.error &&
           startedMs == other.startedMs &&
-          finishedMs == other.finishedMs;
+          finishedMs == other.finishedMs &&
+          boundsJson == other.boundsJson;
 }

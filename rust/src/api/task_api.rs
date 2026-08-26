@@ -141,6 +141,8 @@ struct TaskEntry {
     /// Unix 毫秒时间戳
     started_ms: Mutex<u64>,
     finished_ms: Mutex<u64>,
+    /// 瓦片边界（JSON，切片完成后写入；随历史持久化）
+    bounds: Mutex<Option<String>>,
 }
 
 fn now_ms() -> u64 {
@@ -264,6 +266,7 @@ fn load_history(mgr: &Manager) {
             started_at: Mutex::new(None),
             started_ms: Mutex::new(r.started_ms),
             finished_ms: Mutex::new(r.finished_ms),
+            bounds: Mutex::new(r.bounds_json),
         }));
     }
     mgr.next_id.store(max_id + 1, Ordering::Relaxed);
@@ -295,6 +298,7 @@ fn persist(mgr: &Manager) {
             error: e.error.lock().unwrap().clone(),
             started_ms: *e.started_ms.lock().unwrap(),
             finished_ms: *e.finished_ms.lock().unwrap(),
+            bounds_json: e.bounds.lock().unwrap().clone(),
         }
     }).collect();
     history_store::save(&recs);
@@ -471,6 +475,7 @@ pub fn start_task(cfg: TaskConfig) -> anyhow::Result<u64> {
         started_at: Mutex::new(None),
         started_ms: Mutex::new(0),
         finished_ms: Mutex::new(0),
+        bounds: Mutex::new(None),
     });
     mgr.tasks.lock().unwrap().push(Arc::clone(&entry));
     log(
@@ -739,6 +744,22 @@ fn worker(entry: Arc<TaskEntry>) {
 
     let cancelled = summary.cancelled;
     let err = summary.errors.first().cloned();
+    // 瓦片边界落库（供预览页/外部工具定位）：世界网格 + 每级范围
+    {
+        let bounds = serde_json::json!({
+            "scheme": params.scheme.as_str(),
+            "tile": params.tile_size,
+            "tms": params.scheme == planner::Scheme::Tms,
+            "zmin": summary.levels.first().map(|l| l.level),
+            "zmax": summary.levels.last().map(|l| l.level),
+            "levels": summary.levels.iter().map(|l| serde_json::json!({
+                "z": l.level, "ox": l.ox, "oy": l.oy, "wy": l.wy,
+                "tx": (l.width as f64 / params.tile_size as f64).ceil() as u64,
+                "ty": (l.height as f64 / params.tile_size as f64).ceil() as u64,
+            })).collect::<Vec<_>>(),
+        });
+        *entry.bounds.lock().unwrap() = Some(bounds.to_string());
+    }
     {
         let mut snap = entry.snap.lock().unwrap();
         snap.tiles_done = summary.total_tiles;

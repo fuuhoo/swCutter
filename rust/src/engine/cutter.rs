@@ -52,6 +52,15 @@ pub struct LevelSummary {
     pub width: u32,
     pub height: u32,
     pub tiles: u64,
+    /// 世界列偏移（相对模式 0）
+    #[serde(default)]
+    pub ox: u32,
+    /// 世界行偏移（XYZ 语义，相对模式 0）
+    #[serde(default)]
+    pub oy: u32,
+    /// 全球行数（1<<z）
+    #[serde(default)]
+    pub wy: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -433,6 +442,9 @@ pub fn run_cut_with_control(
                 width: lp.width,
                 height: lp.height,
                 tiles: lp.tiles_x as u64 * lp.tiles_y as u64,
+                ox: 0,
+                oy: 0,
+                wy: lp.tiles_y,
             })
             .collect(),
         (_, Some(mp)) => mp
@@ -446,6 +458,9 @@ pub fn run_cut_with_control(
                     width: nx.saturating_mul(params.tile_size),
                     height: ny.saturating_mul(params.tile_size),
                     tiles: nx as u64 * ny as u64,
+                    ox: lv.tx0,
+                    oy: lv.ty0,
+                    wy: 1u32 << lv.z.min(30),
                 }
             })
             .collect(),

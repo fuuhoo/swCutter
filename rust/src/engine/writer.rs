@@ -171,14 +171,14 @@ document.getElementById('meta').textContent =
 document.getElementById('badge').textContent = `Z${CFG.zmin}–Z${CFG.zmax} · ${CFG.tms?'TMS':'XYZ'}`;
 document.getElementById('badge').style.cssText='font-size:12px;font-weight:700;color:#8fb4ff;background:#4f8cff22;border:1px solid #4f8cff44;border-radius:999px;padding:4px 10px';
 
-// 视图状态：源像素坐标 (cx,cy) 为视口中心，scale = 屏幕 px / 源 px
-let scale = 1, cx = CFG.w/2, cy = CFG.h/2;
+// 视图状态：(cx,cy) 为视口中心，单位 = 基础级(z=zmax)像素；scale = 屏幕 px / 基础级 px
+let scale = 1, cx = 0, cy = 0;
 const cache = new Set();
 const imgs = [];
 // 前置声明：apply() 首帧（fit→apply）就会触达这些绑定，必须先于调用点初始化
 let curL=null; let tsGuard=0; let ovImgs=[]; let overlays=[];
 
-function lvlMeta(){ 
+function lvlMeta(){
   const want = Math.round(CFG.zmax - Math.log2(scale));
   let best = CFG.levels[0];
   for(const l of CFG.levels){ if(l.z === Math.min(CFG.zmax, Math.max(CFG.zmin, want))) best = l; }
@@ -186,49 +186,50 @@ function lvlMeta(){
 }
 // 每级的世界网格信息（相对模式 ox=oy=0）
 function lvGrid(L){ return { ox:L.ox||0, oy:L.oy||0, wy:L.wy||Math.pow(2,L.z)||1 }; }
-// 瓦片包围盒（本页虚拟源像素坐标，1 源px = 1 个最高级像素）
+// 基础级（z=zmax）条目
+function baseLv(){ return CFG.levels.find(l=>l.z===CFG.zmax) || CFG.levels[CFG.levels.length-1]; }
+// 瓦片包围盒：基础级像素坐标 [x0,y0]~[x1,y1]
 let BBOX = null;
 function tileBBox(){
   if(BBOX) return BBOX;
-  const L = CFG.levels[0]; if(!L) return {x0:0,y0:0,x1:CFG.w,y1:CFG.h};
-  const f = CFG.t * Math.pow(2, CFG.zmax - L.z);
-  const g = lvGrid(L);
-  return BBOX = { x0:g.ox*f, y0:g.oy*f, x1:(g.ox+L.tx)*f, y1:(g.oy+L.ty)*f };
+  const B = baseLv(); if(!B) return {x0:0,y0:0,x1:CFG.w,y1:CFG.h};
+  const g = lvGrid(B);
+  return BBOX = { x0:g.ox*CFG.t, y0:g.oy*CFG.t, x1:(g.ox+B.tx)*CFG.t, y1:(g.oy+B.ty)*CFG.t };
 }
+// 某级别的一块瓦片在基础级像素系中的边长
+function tileSpan(L){ return CFG.t * Math.pow(2, CFG.zmax - L.z); }
 function apply(){
   // 清理上一帧
   for(const el of imgs) el.remove(); imgs.length = 0;
-  const L0 = lvlMeta();
-  const G = lvGrid(L0);
+  const L = lvlMeta();
+  const G = lvGrid(L);
   const vw = map.clientWidth, vh = map.clientHeight;
-  // 该级别像素→屏幕
-  const k = scale * Math.pow(2, CFG.zmax - L0.z);
-  const ts = CFG.t * k;
+  const W = tileSpan(L);                       // 该级一块瓦片的基础级像素边长
+  const ts = CFG.t * scale * Math.pow(2, CFG.zmax - L.z);   // 屏幕上瓦片边长
   tsGuard = ts;
   if(ts < 4){ zoomLabel.textContent = `${(scale*100)|0}%`; return; }
-  const left = cx - vw/2/scale, top = cy - vh/2/scale;   // 源坐标视口左上
-  const lx0 = Math.max(0, Math.floor(left / CFG.t)), ly0 = Math.max(0, Math.floor(top / CFG.t));
-  const lx1 = Math.min(L0.tx-1, Math.floor((left + vw/scale) / CFG.t));
-  const ly1 = Math.min(L0.ty-1, Math.floor((top + vh/scale) / CFG.t));
-  for(let ty=ly0; ty<=ly1; ty++){
-    for(let tx=lx0; tx<=lx1; tx++){
-      // 本地格 → 世界格（mercator 绝对编号）；TMS 文件名行翻转基于全球行数
-      const wx = G.ox + tx, wyz = G.oy + ty;
+  const left = cx - vw/2/scale, top = cy - vh/2/scale;   // 基础级像素视口左上
+  // 视口覆盖的世界网格范围 → 与本级边界求交（全部是世界编号）
+  const wx0 = Math.max(G.ox,     Math.floor(left / W));
+  const wx1 = Math.min(G.ox+L.tx-1, Math.floor((left + vw/scale) / W));
+  const wy0 = Math.max(G.oy,     Math.floor(top / W));
+  const wy1 = Math.min(G.oy+L.ty-1, Math.floor((top + vh/scale) / W));
+  for(let wyz=wy0; wyz<=wy1; wyz++){
+    for(let wx=wx0; wx<=wx1; wx++){
       const dy = CFG.tms ? (G.wy - 1 - wyz) : wyz;
-      const key = `${L0.z}/${wx}/${dy}`;
-      const sx = (tx*CFG.t - left)*scale, sy = (ty*CFG.t - top)*scale;
+      const sx = (wx*W - left)*scale, sy = (wyz*W - top)*scale;
       let img = new Image();
       img.className='tile';
       img.style.left = sx+'px'; img.style.top = sy+'px';
       img.style.width = (ts+1)+'px'; img.style.height=(ts+1)+'px';
-      img.src = key + '.png';
+      img.src = `${L.z}/${wx}/${dy}.png`;
       // 中断的任务可能缺块：静默移除，避免碎图标与控制台噪音
       img.onerror=()=>img.remove();
       map.appendChild(img); imgs.push(img);
     }
   }
-  drawOverlays(L0, left, top, vw, vh, k);
-  zoomLabel.textContent = `${Math.round(scale*100)}% · L${L0.z}`;
+  drawOverlays(L, left, top, vw, vh);
+  zoomLabel.textContent = `${Math.round(scale*100)}% · L${L.z}`;
 }
 function clampCenter(){
   const b = tileBBox();
@@ -238,6 +239,7 @@ function clampCenter(){
 function fit(){
   const b = tileBBox();                       // 主动定位到瓦片包围盒
   scale = Math.min(map.clientWidth/(b.x1-b.x0), map.clientHeight/(b.y1-b.y0));
+  if(!isFinite(scale) || scale<=0) scale = 1;
   cx=(b.x0+b.x1)/2; cy=(b.y0+b.y1)/2; clampCenter(); apply();
 }
 function one(){ scale=1; apply(); }
@@ -326,14 +328,16 @@ function renderOvList(){
 function applySoft(){ if(!curL) return;
   for(const el of ovImgs){ const o=overlays[el._ovi]; if(o) el.style.opacity=o.opacity; } }
 
-function drawOverlays(L,left,top,vw,vh,k){
+function drawOverlays(L,left,top,vw,vh){
   for(const el of ovImgs) el.remove(); ovImgs.length=0;
   curL=L;
   if(tsGuard<4) return;
   const G = lvGrid(L);
-  const lx1e=Math.min(L.tx, Math.floor((left+vw/scale)/CFG.t)+1);
-  const ly1e=Math.min(L.ty, Math.floor((top+vh/scale)/CFG.t)+1);
-  const lx0=Math.max(0, Math.floor(left/CFG.t)), ly0=Math.max(0, Math.floor(top/CFG.t));
+  const W = tileSpan(L);                     // 该级一块瓦片的基础级像素边长
+  const wx0 = Math.max(G.ox,     Math.floor(left / W));
+  const wx1 = Math.min(G.ox+L.tx-1, Math.floor((left + vw/scale) / W));
+  const wy0 = Math.max(G.oy,     Math.floor(top / W));
+  const wy1 = Math.min(G.oy+L.ty-1, Math.floor((top + vh/scale) / W));
   overlays.forEach((o,oi)=>{
     if(!o.on) return;
     // 防护：空/非法模板会产生 img.src='' → 浏览器自引用页面 URL（file:// 下报 Unsafe attempt）
@@ -342,18 +346,17 @@ function drawOverlays(L,left,top,vw,vh,k){
     let tpl=o.tpl.replace(/\{tk\}/g, tkv);
     if(tpl.includes('{tk}')) return; // 无密钥不请求
     const oz=Math.max(o.zmin??0, Math.min(o.zmax??22, L.z));
-    for(let ty=ly0; ty<ly1e; ty++){
-      for(let tx=lx0; tx<lx1e; tx++){
-        // 底图用世界编号对齐（与本地瓦片同一网格原点）
-        const wx=G.ox+tx, wyz=G.oy+ty;
+    for(let wyz=wy0; wyz<=wy1; wyz++){
+      for(let wx=wx0; wx<=wx1; wx++){
+        // 底图与本地瓦片同一世界网格原点，天然对齐
         const oy=o.tms? (Math.pow(2,oz)-1-wyz) : wyz;
         let url=tpl.replace('{z}',oz).replace('{x}',wx).replace('{y}',oy);
-        if(o.subs&&o.subs.length){ url=url.replace('{s}', o.subs[(tx+ty)%o.subs.length]); }
+        if(o.subs&&o.subs.length){ url=url.replace('{s}', o.subs[(wx+wyz)%o.subs.length]); }
         if(!url || url.startsWith('file:')) continue;
         const img=new Image();
         img.className = o.below ? 'ov ovb' : 'ov';
-        img.style.left=(tx*CFG.t-left)*scale+'px';
-        img.style.top=(ty*CFG.t-top)*scale+'px';
+        img.style.left=(wx*W-left)*scale+'px';
+        img.style.top=(wyz*W-top)*scale+'px';
         img.style.width=(CFG.t*k+1)+'px'; img.style.height=(CFG.t*k+1)+'px';
         img.style.opacity=o.opacity;
         img.onerror=()=>img.remove();

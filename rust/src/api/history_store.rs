@@ -34,6 +34,8 @@ pub struct Rec {
     pub error: Option<String>,
     pub started_ms: u64,
     pub finished_ms: u64,
+    /// 瓦片边界（JSON：scheme/tile/zmin/zmax/levels[{z,ox,oy,tx,ty,wy}]）
+    pub bounds_json: Option<String>,
 }
 
 fn db_path() -> Option<PathBuf> {
@@ -79,6 +81,7 @@ fn conn() -> &'static Mutex<Connection> {
         // 旧库迁移：补列（已存在则忽略）
         let _ = c.execute_batch("ALTER TABLE tasks ADD COLUMN skip_empty INTEGER NOT NULL DEFAULT 0");
         let _ = c.execute_batch("ALTER TABLE tasks ADD COLUMN mercator INTEGER NOT NULL DEFAULT 0");
+        let _ = c.execute_batch("ALTER TABLE tasks ADD COLUMN bounds_json TEXT");
         Mutex::new(c)
     })
 }
@@ -102,7 +105,7 @@ pub fn load() -> Vec<Rec> {
         "SELECT id, source, output, tile_size, scheme, alpha, resample, zmin, zmax,
                 skip_empty, mercator,
                 status, level, tiles_done, total_tiles, bytes_written, elapsed_ms,
-                error, started_ms, finished_ms
+                error, started_ms, finished_ms, bounds_json
          FROM tasks ORDER BY id ASC",
     ) {
         Ok(s) => s,
@@ -133,6 +136,7 @@ pub fn load() -> Vec<Rec> {
             error: r.get(17)?,
             started_ms: r.get::<_, i64>(18)? as u64,
             finished_ms: r.get::<_, i64>(19)? as u64,
+            bounds_json: r.get(20)?,
         })
     };
     let rows = stmt.query_map([], map);
@@ -155,8 +159,8 @@ pub fn save(recs: &[Rec]) {
                 "INSERT INTO tasks (id, source, output, tile_size, scheme, alpha, resample,
                                     zmin, zmax, skip_empty, mercator,
                                     status, level, tiles_done, total_tiles,
-                                    bytes_written, elapsed_ms, error, started_ms, finished_ms)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+                                    bytes_written, elapsed_ms, error, started_ms, finished_ms, bounds_json)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
             )?;
             for r in recs {
                 ins.execute(rusqlite::params![
@@ -180,6 +184,7 @@ pub fn save(recs: &[Rec]) {
                     r.error,
                     r.started_ms as i64,
                     r.finished_ms as i64,
+                    r.bounds_json,
                 ])?;
             }
         }
@@ -251,6 +256,7 @@ fn import_legacy_json() {
             error: o.error,
             started_ms: o.started_ms,
             finished_ms: o.finished_ms,
+            bounds_json: None,
         })
         .collect();
     save(&recs);

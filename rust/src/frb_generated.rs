@@ -1012,6 +1012,7 @@ impl SseDecode for crate::api::history_store::Rec {
         let mut var_error = <Option<String>>::sse_decode(deserializer);
         let mut var_startedMs = <u64>::sse_decode(deserializer);
         let mut var_finishedMs = <u64>::sse_decode(deserializer);
+        let mut var_boundsJson = <Option<String>>::sse_decode(deserializer);
         return crate::api::history_store::Rec {
             id: var_id,
             source: var_source,
@@ -1033,6 +1034,7 @@ impl SseDecode for crate::api::history_store::Rec {
             error: var_error,
             started_ms: var_startedMs,
             finished_ms: var_finishedMs,
+            bounds_json: var_boundsJson,
         };
     }
 }
@@ -1432,6 +1434,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::history_store::Rec {
             self.error.into_into_dart().into_dart(),
             self.started_ms.into_into_dart().into_dart(),
             self.finished_ms.into_into_dart().into_dart(),
+            self.bounds_json.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1845,6 +1848,7 @@ impl SseEncode for crate::api::history_store::Rec {
         <Option<String>>::sse_encode(self.error, serializer);
         <u64>::sse_encode(self.started_ms, serializer);
         <u64>::sse_encode(self.finished_ms, serializer);
+        <Option<String>>::sse_encode(self.bounds_json, serializer);
     }
 }
 
