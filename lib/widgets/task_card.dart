@@ -145,18 +145,83 @@ class TaskCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: TweenAnimationBuilder<double>(
-                tween: Tween(end: progress ?? 0),
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOutCubic,
-                builder: (context, v, _) => LinearProgressIndicator(
-                  value: running ? null : v,
-                  minHeight: 7,
-                  backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+            // 进度条 + 操作按钮同一行
+            Row(
+              children: [
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(end: progress ?? 0),
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, v, _) => LinearProgressIndicator(
+                        value: running ? null : v,
+                        minHeight: 7,
+                        backgroundColor:
+                            cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+                if (progress != null) ...[
+                  const SizedBox(width: 8),
+                  Text('${(progress * 100).toStringAsFixed(0)}%',
+                      style: TextStyle(
+                          fontSize: 11.5,
+                          fontFeatures: const [
+                            FontFeature.tabularFigures()
+                          ],
+                          color: cs.onSurfaceVariant)),
+                ],
+                const SizedBox(width: 6),
+                // 暂停/继续
+                if (t.status == 'paused')
+                  IconButton(
+                    tooltip: '继续',
+                    onPressed: onPauseResume,
+                    icon: Icon(Icons.play_arrow_rounded,
+                        size: 20, color: cs.primary),
+                  )
+                else if (running || t.status == 'queued')
+                  IconButton(
+                    tooltip: '暂停',
+                    onPressed: onPauseResume,
+                    icon: Icon(Icons.pause_rounded,
+                        size: 20, color: cs.onSurfaceVariant),
+                  ),
+                // 取消
+                if (running || t.status == 'queued' || t.status == 'paused')
+                  IconButton(
+                    tooltip: '取消任务',
+                    onPressed: onCancel,
+                    icon: Icon(Icons.stop_circle_outlined,
+                        size: 20, color: cs.error.withValues(alpha: 0.85)),
+                  ),
+                // 打开文件夹
+                if (t.status != 'queued')
+                  IconButton(
+                    tooltip: '打开文件夹',
+                    onPressed: onOpenFolder,
+                    icon: Icon(Icons.folder_open_rounded,
+                        size: 20, color: cs.onSurfaceVariant),
+                  ),
+                // 浏览器预览
+                if (t.status == 'done')
+                  IconButton(
+                    tooltip: '浏览器预览',
+                    onPressed: onPreview,
+                    icon: Icon(Icons.public_rounded, size: 20, color: cs.primary),
+                  ),
+                // 移除
+                if (finished)
+                  IconButton(
+                    tooltip: '移除记录',
+                    onPressed: onRemove,
+                    icon: Icon(Icons.delete_outline_rounded,
+                        size: 19, color: cs.outline),
+                  ),
+              ],
             ),
             const SizedBox(height: 8),
             Wrap(
@@ -194,60 +259,6 @@ class TaskCard extends StatelessWidget {
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis),
             ],
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                if (t.status == 'paused')
-                  FilledButton.tonalIcon(
-                    onPressed: onPauseResume,
-                    icon: const Icon(Icons.play_arrow_rounded, size: 16),
-                    label: const Text('继续'),
-                  )
-                else if (running || t.status == 'queued')
-                  OutlinedButton.icon(
-                    onPressed: onPauseResume,
-                    icon: const Icon(Icons.pause_rounded, size: 16),
-                    label: const Text('暂停'),
-                  ),
-                if (running || t.status == 'queued' || t.status == 'paused') ...[
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: onCancel,
-                    icon: const Icon(Icons.stop_circle_outlined, size: 16),
-                    label: const Text('取消'),
-                  ),
-                ],
-                // 图标按钮行：打开文件夹（非排队可用）+ 浏览器预览（完成后）
-                if (t.status != 'queued') ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: '打开文件夹',
-                    onPressed: onOpenFolder,
-                    style: IconButton.styleFrom(
-                      backgroundColor:
-                          cs.surfaceContainerHighest.withValues(alpha: 0.5),
-                    ),
-                    icon: const Icon(Icons.folder_open_rounded, size: 19),
-                  ),
-                ],
-                if (t.status == 'done') ...[
-                  const SizedBox(width: 8),
-                  IconButton.filledTonal(
-                    tooltip: '浏览器预览',
-                    onPressed: onPreview,
-                    icon: const Icon(Icons.public_rounded, size: 19),
-                  ),
-                ],
-                const Spacer(),
-                if (finished)
-                  IconButton(
-                    tooltip: '移除记录',
-                    onPressed: onRemove,
-                    icon: Icon(Icons.delete_outline_rounded,
-                        size: 18, color: cs.outline),
-                  ),
-              ],
-            ),
           ],
         ),
       ),

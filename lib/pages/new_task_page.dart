@@ -153,19 +153,43 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
   Future<void> _startAll() async {
     final store = ref.read(draftProvider);
     final app = ref.read(appProvider);
-    // 前置校验：预计瓦片总量超限时拒绝（与 Rust 端上限一致）
-    const maxTiles = 8000000;
-    for (final d in store.drafts) {
+    // 双层阈值：>800万 弹确认（耗时/磁盘提示）；>1亿 硬拒绝（与 Rust 一致）
+    const softLimit = 8000000;
+    const hardLimit = 100000000;
+    var pendingConfirm = false;
+    for (final d in List<TaskDraft>.from(store.drafts)) {
       final total = d.estimates?.fold<int>(0, (a, e) => a + e.tiles.toInt()) ?? 0;
-      if (total > maxTiles) {
+      if (total > hardLimit) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(
-                  '${d.fileName}：级别范围预计 $total 块瓦片，超过 $maxTiles 上限。\n请缩小级别范围或降低放大倍数。'),
+                  '${d.fileName}：预计 $total 块瓦片，超过硬上限 $hardLimit（磁盘/耗时不可行）。请缩小级别范围。'),
               duration: const Duration(seconds: 4)));
         }
         return;
       }
+      if (total > softLimit) pendingConfirm = true;
+    }
+    if (pendingConfirm && mounted) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('确认大批量切片？'),
+          content: const Text(
+              '所选任务的预计瓦片总量超过 800 万块：\n'
+              '· 耗时可能长达数小时至数天\n'
+              '· 输出可能占用数百 GB 磁盘\n\n确定要继续吗？'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('继续切片')),
+          ],
+        ),
+      );
+      if (ok != true) return;
     }
     final failures = <String>[];
     for (final d in List<TaskDraft>.from(store.drafts)) {

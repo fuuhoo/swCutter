@@ -24,8 +24,9 @@ pub struct LevelPlan {
 /// 级别硬上限（对齐主流切片工具：0–22 自由设置）
 pub const MAX_LEVEL_CAP: u32 = 22;
 
-/// 单任务瓦片总量保护：超出直接拒绝（防止误设级别导致内存分配崩溃）
-pub const MAX_TOTAL_TILES: u64 = 8_000_000;
+/// 单任务瓦片总量硬保护：仅防误操作（如小图拉满 22 级产生数百亿块），
+/// 非格式限制。UI 层在 800 万以上会先弹确认。
+pub const MAX_TOTAL_TILES_HARD: u64 = 100_000_000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PyramidPlan {
@@ -116,16 +117,16 @@ pub fn plan(
     let zmin = req_min;
     let zmax = req_max.min(MAX_LEVEL_CAP).max(zmin);
 
-    // 先估算总量，超限直接拒绝（避免下游巨型分配导致进程崩溃）
+    // 先估算总量，超硬上限直接拒绝（防误操作；正常项目远达不到）
     {
         let mut total: u64 = 0;
         for level in zmin..=zmax {
             let (w, h) = level_dims(image_width, image_height, level, max_level);
             total += ((w + tile_size - 1) / tile_size) as u64
                 * ((h + tile_size - 1) / tile_size) as u64;
-            if total > MAX_TOTAL_TILES {
+            if total > MAX_TOTAL_TILES_HARD {
                 return Err(CoreError::InvalidInput(format!(
-                    "级别范围 [{zmin}, {zmax}] 预计瓦片数超过 {MAX_TOTAL_TILES} 上限，请缩小范围或降低放大倍数"
+                    "级别范围 [{zmin}, {zmax}] 预计瓦片数 {total} 超过硬上限 {MAX_TOTAL_TILES_HARD}（磁盘与耗时不可行），请缩小范围"
                 )));
             }
         }
