@@ -219,7 +219,8 @@ pub fn run_cut_with_control(
             }
         }
         (_, Some(mp)) => {
-            for lv in &mp.levels {
+            // gdal2tiles 顺序：最高级（直接采样源）最先，低级别概览随后
+            for lv in mp.levels.iter().rev() {
                 let rows = 1u32 << lv.z.min(30);
                 for ty in lv.ty0..=lv.ty1 {
                     for tx in lv.tx0..=lv.tx1 {
@@ -299,6 +300,8 @@ pub fn run_cut_with_control(
     let src_path = params.source.clone();
     let p_ref = params;
     let sf_full = Arc::clone(&shared_full);
+    // mercator 模式的最高级（基础级）：该级直接采样源；更低级由子瓦片合成
+    let base_z = mplan.as_ref().and_then(|mp| mp.levels.last().map(|l| l.z));
 
     jobs.par_iter().for_each(|job| {
         // 暂停停靠（取消可打断）
@@ -309,7 +312,7 @@ pub fn run_cut_with_control(
             return;
         }
         let z_label = job.z;
-        current_level.fetch_max(job.z, Ordering::Relaxed);
+        current_level.store(job.z, Ordering::Relaxed); // 最近开始的级别（诚实展示）
 
         // 断点续切命中：直接计入完成
         let rel = writer::tile_rel_path(p_ref.scheme, job.z, job.tx, job.ty, job.tiles_y);
@@ -322,7 +325,10 @@ pub fn run_cut_with_control(
             return;
         }
 
-        let result = if sf_full.lock().unwrap().is_some() {
+        let result = if matches!(base_z, Some(bz) if job.z < bz) {
+            // gdal2tiles 概览级：由上一级 4 块子瓦片降采样合成（源图只在基础级被读取）
+            render_tile_overview(p_ref, job.z, job.tx, job.ty)
+        } else if sf_full.lock().unwrap().is_some() {
             // 巨型条带源：直接读共享全图（无解码竞争，取消/暂停即时生效）
             let guard = sf_full.lock().unwrap();
             let full = guard.as_ref().expect("checked some");
@@ -513,6 +519,38 @@ pub fn run_cut_with_control(
     summary
 }
 
+/// gdal2tiles 式概览瓦片：读取上一级 4 块子瓦片拼合后降采样。
+/// 子块缺失（如跳过透明未写）按全透明处理，空白区域自然向下传播。
+fn render_tile_overview(params: &CutParams, z: u32, tx: u32, ty: u32) -> CoreResult<u64> {
+    let t = params.tile_size;
+    let mut canvas = image::RgbaImage::new(t * 2, t * 2);
+    for (dy, dx) in [(0u32, 0u32), (0, 1), (1, 0), (1, 1)] {
+        let child_rel = writer::tile_rel_path(
+            params.scheme,
+            z + 1,
+            tx * 2 + dx,
+            ty * 2 + dy,
+            1u32 << (z + 1).min(30),
+        );
+        let p = params.output.join(&child_rel);
+        if let Ok(bytes) = std::fs::read(&p) {
+            if let Ok(img) = image::load_from_memory(&bytes) {
+                let rgba = img.to_rgba8();
+                image::imageops::overlay(&mut canvas, &rgba, (dx * t) as i64, (dy * t) as i64);
+            }
+        }
+    }
+    let out = image::imageops::resize(
+        &canvas,
+        t,
+        t,
+        image::imageops::FilterType::Triangle,
+    );
+    let mut rgba = out.into_raw();
+    let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
+    write_tile_png(params, rgba, t, t, rel)
+}
+
 // ---------------- 线程本地读取器 ----------------
 
 thread_local! {
@@ -583,10 +621,13 @@ fn render_tile_mercator(
     let mut img = image::RgbaImage::from_raw(iw.max(1), ih.max(1), crop)
         .ok_or_else(|| CoreError::Encoding("mercator 矩形缓冲不匹配".into()))?;
 
+        let flt = resample_filter(params.resample);
     let out_img = if img.width() == params.tile_size && img.height() == params.tile_size {
         img
+    } else if needs_smart(img.width(), img.height(), params.tile_size, params.tile_size) {
+        smart_downscale(img, params.tile_size, params.tile_size, flt)
     } else {
-        image::imageops::resize(&img, params.tile_size, params.tile_size, resample_filter(params.resample))
+        image::imageops::resize(&img, params.tile_size, params.tile_size, flt)
     };
     let rgba = out_img.into_raw();
     let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
@@ -717,6 +758,38 @@ fn resample_filter(resample: Resample) -> ImgFilter {
         Resample::Nearest => ImgFilter::Nearest,
         Resample::Bilinear => ImgFilter::Triangle,
     }
+}
+
+/// 大比例降采样：先反复折半（每步 O(n)，窗口恒定 2px 支撑）到接近目标，
+/// 再用指定滤波器做最后一步。避免直接 300MP→65KP 时滤波窗口爆炸的长尾。
+fn smart_downscale(
+    img: image::RgbaImage,
+    tw: u32,
+    th: u32,
+    filter: ImgFilter,
+) -> image::RgbaImage {
+    let mut cur = img;
+    // 折半直到任一边小于目标 4 倍（保留一步精细滤波空间）
+    while cur.width() >= tw.saturating_mul(4) && cur.height() >= th.saturating_mul(4) {
+        let nw = (cur.width() / 2).max(tw);
+        let nh = (cur.height() / 2).max(th);
+        cur = image::imageops::resize(
+            &cur,
+            nw,
+            nh,
+            image::imageops::FilterType::Triangle,
+        );
+    }
+    if cur.width() == tw && cur.height() == th {
+        cur
+    } else {
+        image::imageops::resize(&cur, tw, th, filter)
+    }
+}
+
+/// 需要智能降采样时返回 true（源区域远大于输出）
+fn needs_smart(w: u32, h: u32, tw: u32, th: u32) -> bool {
+    w >= tw.saturating_mul(4) && h >= th.saturating_mul(4)
 }
 
 fn render_tile(

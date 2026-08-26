@@ -67,8 +67,8 @@ fn level_range(bounds: [f64; 4], z: u32, tile: u32) -> MercLevel {
 }
 
 /// 规划 mercator 金字塔。
-/// 对齐 gdal2tiles：用户显式指定的级别范围**不截断到 native**，
-/// 超出 native 的级别按放大渲染（与 -z 1-22 请求超出时行为一致）。
+/// 对齐 gdal2tiles：用户显式指定的级别范围**不截断到 native**；
+/// 级别下限为 1（不生成 Z0）。
 pub fn plan(
     bounds3857: [f64; 4],
     sx_m: f64,
@@ -78,7 +78,7 @@ pub fn plan(
     max_total: u64,
 ) -> CoreResult<MercPlan> {
     let nz = zoom_for_pixel_size(sx_m.abs());
-    let zmin = req_min.unwrap_or(0);
+    let zmin = req_min.unwrap_or(1).max(1);
     let zmax = req_max.unwrap_or(nz).max(zmin);
 
     let mut levels = Vec::new();

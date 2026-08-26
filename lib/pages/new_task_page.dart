@@ -309,23 +309,25 @@ class _FormColumn extends ConsumerWidget {
         // ---- 级别范围 ----
         _SectionCard(title: '级别范围', icon: Icons.layers_rounded, children: [
           RangeSlider(
-            values: RangeValues(d.zmin.toDouble(), d.zmax.toDouble()),
-            min: 0,
+            values: RangeValues(
+                d.zmin < 1 ? 1 : d.zmin.toDouble(), d.zmax.toDouble()),
+            min: 1,
             max: 22,
-            divisions: 22,
+            divisions: 21,
             labels: RangeLabels('Z${d.zmin}', 'Z${d.zmax}'),
             onChanged: locked
                 ? null
                 : (v) {
-                    active!.zmin = v.start.round();
+                    active!.zmin = v.start.round().clamp(1, 22);
                     active!.zmax = v.end.round();
+                    if (active!.zmax < active!.zmin) active!.zmax = active!.zmin;
                     store.refreshEstimates(active!);
                   },
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Z0 单瓦片全览',
+              Text('从 Z1 开始（不生成 Z0）',
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
               Text(
                 locked
@@ -449,7 +451,7 @@ class _FormColumn extends ConsumerWidget {
                       }),
                     ],
                   ),
-                  Text('可直接在右侧预览图上点击取色，容差 $tolerance',
+                  Text('输入 RGB 与容差设置透明键（点选拾色暂不可用）',
                       style:
                           TextStyle(fontSize: 11, color: Colors.grey.shade500)),
                 ],
@@ -536,9 +538,6 @@ class _PreviewPane extends ConsumerStatefulWidget {
 class _PreviewPaneState extends ConsumerState<_PreviewPane> {
   Size? _previewSize;          // 预览 PNG 实际像素尺寸
   Uint8List? _decodedFor;      // 已解码的预览字节（同一 TaskDraft 内可变，需身份比较）
-  Offset? _pickMark;           // 取色标记（预览像素坐标）
-  Color? _pickColor;
-  Timer? _markTimer;
 
   /// 从 PNG 字节直接解析 IHDR 尺寸（字节 16..24，大端宽高），
   /// 避免用与实际分辨率不符的占位公式导致布局错乱/拉伸花屏。
@@ -577,81 +576,9 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
     super.didUpdateWidget(old);
     if (!identical(old.draft?.previewBytes, widget.draft?.previewBytes)) {
       _previewSize = null;
-      _pickMark = null;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleDecode());
   }
-
-  @override
-  void dispose() {
-    _markTimer?.cancel();
-    super.dispose();
-  }
-
-  /// 点击取色：仅颜色键模式下有效；映射源坐标 → Rust 精确采样 → 写入颜色键。
-  Future<void> _onPick(Offset localPx) async {
-    final size = _previewSize;
-    final draft = widget.draft;
-    if (draft == null) return;
-    if (size == null || size.width < 1 || size.height < 1) return;
-    // 门控：只有颜色键模式才拾取，避免无意义改参
-    if (draft.alpha is! AlphaMode_ColorKey) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('请先在左侧「透明处理」中选择「颜色键 → 透明」，再点击图像取色'),
-        duration: Duration(seconds: 2),
-      ));
-      return;
-    }
-    final sx = (localPx.dx / size.width * draft.width).floor().clamp(0, draft.width - 1);
-    final sy = (localPx.dy / size.height * draft.height).floor().clamp(0, draft.height - 1);
-    try {
-      final px = await rust.samplePixel(source: draft.source, x: sx, y: sy);
-      final r = px[0], g = px[1], b = px[2];
-      final a = draft.alpha as AlphaMode_ColorKey;
-      final keepTol = a.tolerance;
-
-      final prevKey = Color.fromARGB(255, a.r, a.g, a.b);
-      final newKey = Color.fromARGB(255, r, g, b);
-
-      draft.alpha = AlphaMode.colorKey(r: r, g: g, b: b, tolerance: keepTol);
-      ref.read(draftProvider).touch();
-
-      // 视觉反馈：图像内取色标记，900ms 淡出
-      setState(() {
-        _pickMark = localPx;
-        _pickColor = newKey;
-      });
-      _markTimer?.cancel();
-      _markTimer = Timer(const Duration(milliseconds: 900), () {
-        if (mounted) setState(() => _pickMark = null);
-      });
-
-      // 打扰最小化：仅颜色实际变化时提示
-      if (!mounted) return;
-      if (prevKey != newKey) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Row(children: [
-            Container(width: 13, height: 13,
-                decoration: BoxDecoration(color: newKey, shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white24))),
-            const SizedBox(width: 8),
-            Text('透明键更新为 #${_hex(r, g, b)}'),
-          ]),
-          duration: const Duration(milliseconds: 1400),
-        ));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('取色失败: $e')));
-      }
-    }
-  }
-
-  static String _hex(int r, int g, int b) =>
-      [r, g, b].map((v) => v.toRadixString(16).padLeft(2, '0')).join().toUpperCase();
 
   @override
   Widget build(BuildContext context) {
@@ -688,62 +615,18 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
                 fit: StackFit.expand,
                 children: [
                   if (draft.previewBytes != null)
-                    MouseRegion(
-                      cursor: draft.alpha is AlphaMode_ColorKey
-                          ? SystemMouseCursors.precise
-                          : MouseCursor.defer,
-                      child: InteractiveViewer(
-                        maxScale: 12,
-                        child: FittedBox(
-                          fit: BoxFit.contain,
-                          child: SizedBox(
-                            width: (_previewSize ?? _expectedSize(draft)).width,
-                            height: (_previewSize ?? _expectedSize(draft)).height,
-                            child: Stack(
-                              children: [
-                                GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTapUp: (d) => _onPick(d.localPosition),
-                                  child: Image.memory(draft.previewBytes!,
-                                      fit: BoxFit.fill, gaplessPlayback: true),
-                                ),
-                                if (_pickMark != null && _pickColor != null)
-                                  Positioned(
-                                    left: _pickMark!.dx - 11,
-                                    top: _pickMark!.dy - 11,
-                                    child: IgnorePointer(
-                                      child: TweenAnimationBuilder<double>(
-                                        tween: Tween(begin: 0.4, end: 1),
-                                        duration: const Duration(milliseconds: 120),
-                                        builder: (context, v, _) => Container(
-                                          width: 22, height: 22,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                                color: Colors.white.withValues(alpha: v),
-                                                width: 2),
-                                            color: Colors.black26,
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: Container(
-                                            width: 10, height: 10,
-                                            decoration: BoxDecoration(
-                                              shape: BoxShape.circle,
-                                              color: _pickColor!
-                                                  .withValues(alpha: v),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
+                    InteractiveViewer(
+                      maxScale: 12,
+                      child: FittedBox(
+                        fit: BoxFit.contain,
+                        child: SizedBox(
+                          width: (_previewSize ?? _expectedSize(draft)).width,
+                          height: (_previewSize ?? _expectedSize(draft)).height,
+                          child: Image.memory(draft.previewBytes!,
+                              fit: BoxFit.fill, gaplessPlayback: true),
                         ),
                       ),
-                    )
-                  else
+                    ),
                     Center(
                       child: draft.loadingPreview
                           ? const CircularProgressIndicator()
@@ -760,59 +643,25 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
                     ),
                   if (draft.loadingPreview && draft.previewBytes == null)
                     Container(color: cs.scrim.withValues(alpha: 0.05)),
-                  // 右上角：层级/排列信息 + 取色提示角标
+                  // 右上角：层级/排列信息角标
                   if (draft.previewBytes != null)
                     Positioned(
                       right: 10, top: 10,
                       child: IgnorePointer(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: cs.scrim.withValues(alpha: 0.55),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                Icon(Icons.layers_rounded, size: 12, color: cs.primary),
-                                const SizedBox(width: 5),
-                                Text('Z${draft.zmin}–Z${draft.zmax} · ${schemeName(draft.scheme)}',
-                                    style: TextStyle(
-                                        fontSize: 11, fontWeight: FontWeight.w600,
-                                        color: cs.onSurface.withValues(alpha: 0.9))),
-                              ]),
-                            ),
-                            const SizedBox(height: 5),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: cs.scrim.withValues(alpha: 0.55),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                Icon(
-                                  draft.alpha is AlphaMode_ColorKey
-                                      ? Icons.colorize_rounded
-                                      : Icons.lock_outline_rounded,
-                                  size: 12,
-                                  color: draft.alpha is AlphaMode_ColorKey
-                                      ? cs.primary
-                                      : cs.outline,
-                                ),
-                                const SizedBox(width: 5),
-                                Text(
-                                  draft.alpha is AlphaMode_ColorKey
-                                      ? '点击图像拾取透明色'
-                                      : '选「颜色键」后可点图取色',
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      color: cs.onSurface
-                                          .withValues(alpha: draft.alpha is AlphaMode_ColorKey ? 0.85 : 0.55)),
-                                ),
-                              ]),
-                            ),
-                          ],
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: cs.scrim.withValues(alpha: 0.55),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.layers_rounded, size: 12, color: cs.primary),
+                            const SizedBox(width: 5),
+                            Text('Z${draft.zmin}–Z${draft.zmax} · ${schemeName(draft.scheme)}',
+                                style: TextStyle(
+                                    fontSize: 11, fontWeight: FontWeight.w600,
+                                    color: cs.onSurface.withValues(alpha: 0.9))),
+                          ]),
                         ),
                       ),
                     ),
