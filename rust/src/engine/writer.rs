@@ -109,265 +109,119 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
     let html = r#"<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <title>swCutter 瓦片预览</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
- :root{color-scheme:dark}
- html,body{margin:0;height:100%;background:#0f1219;color:#dfe5ef;font-family:"Microsoft YaHei UI",system-ui,sans-serif;overflow:hidden}
- #bar{display:flex;gap:10px;align-items:center;padding:10px 14px;background:#171c26;border-bottom:1px solid #ffffff14}
- #bar b{font-size:13px}
- #bar .sp{flex:1}
- button{background:#232a37;border:1px solid #ffffff18;color:#dfe5ef;border-radius:8px;padding:5px 12px;cursor:pointer;font-size:13px}
- button:hover{background:#2b3446}
- #zoom{min-width:64px;text-align:center;font-variant-numeric:tabular-nums;color:#9fb0cc;font-size:12px}
- #map{position:absolute;inset:46px 0 0 0;cursor:grab}
- #map.drag{cursor:grabbing}
- img.tile{position:absolute;image-rendering:auto;-webkit-user-drag:none;user-select:none;z-index:3}
- img.ov{position:absolute;pointer-events:none;-webkit-user-drag:none;z-index:6}
- img.ovb{z-index:1;background:#0d1117}
- #hint{position:absolute;right:12px;bottom:10px;font-size:11px;color:#7a8699}
- #panel{position:absolute;top:50px;right:10px;width:min(430px,92vw);max-height:70vh;overflow:auto;
-        background:#171c26f2;border:1px solid #ffffff20;border-radius:12px;padding:12px;z-index:50;
-        display:flex;flex-direction:column;gap:8px;font-size:12.5px}
- #panel[hidden]{display:none}
- .prow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
- .phint{color:#7a8699;font-size:11px;line-height:1.5}
- #panel input[type=text],#panel input:not([type]),#panel input[type=number]{
-   background:#0f1219;border:1px solid #ffffff22;color:#dfe5ef;border-radius:7px;padding:5px 8px;font-size:12px}
- .chk{display:flex;align-items:center;gap:3px;color:#9fb0cc}
- .ovItem{border:1px solid #ffffff14;border-radius:9px;padding:7px 9px;display:flex;flex-direction:column;gap:5px;background:#10141d}
- .ovItem .row{display:flex;gap:7px;align-items:center}
- .ovItem input[type=range]{flex:1;accent-color:#4f8cff}
- .tag{font-size:10.5px;color:#7a8699}
+ html,body{margin:0;height:100%;background:#0d1117}
+ #map{position:absolute;inset:0}
+ #bar{position:absolute;left:0;right:0;top:0;z-index:1000;display:flex;gap:10px;align-items:center;
+      padding:8px 14px;background:#171c26e6;border-bottom:1px solid #ffffff14}
+ #bar b{font-size:13px;color:#dfe5ef}
+ #badge{font-size:11.5px;font-weight:700;color:#8fb4ff;background:#4f8cff22;border:1px solid #4f8cff44;border-radius:999px;padding:3px 10px}
+ .sp{flex:1}
+ #hint{font-size:11px;color:#7a8699}
+ #ovp{position:absolute;top:52px;right:10px;z-index:1000;background:#171c26f2;border:1px solid #ffffff20;
+      border-radius:12px;padding:10px 12px;font-size:12px;color:#cfd6e4;max-width:320px;display:flex;flex-direction:column;gap:6px}
+ #ovp label{display:flex;gap:6px;align-items:center}
+ #ovp input[type=range]{width:110px;accent-color:#4f8cff}
+ .offline{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7a8699;font-size:13px;z-index:999}
 </style></head>
 <body>
 <div id="bar">
- <b>🧩 swCutter 预览</b><span id="meta"></span><span class="sp"></span>
- <button id="out">−</button><span id="zoom"></span><button id="in">＋</button>
- <button id="fit">适应窗口</button><button id="one">1:1</button>
+ <b>🧩 swCutter 预览（Leaflet）</b>
+ <span class="sp"></span>
  <span id="badge"></span>
- <button id="layersBtn">图层</button>
-</div>
-<div id="panel" hidden>
- <div class="prow"><b>在线图层对照</b><span style="flex:1"></span><button id="addPresetTdt">天地图·矢量</button><button id="addPresetImg">天地图·影像</button><button id="addPresetOsm">OSM</button></div>
- <div class="phint">叠加层与本地金字塔同层级同编号对齐，用于核对切片网格/排列；天地图需填 tk 密钥。</div>
- <div class="prow"><input id="tkInput" placeholder="天地图 tk 密钥（保存到本机）"><button id="saveTk">保存密钥</button></div>
- <div id="ovList"></div>
- <div class="prow">
-   <input id="ovName" placeholder="名称" style="width:90px">
-   <input id="ovTpl" placeholder="URL 模板，含 {z} {x} {y} 可选 {s}" style="flex:1">
-   <label class="chk"><input type="checkbox" id="ovTms"> TMS</label>
-   <input id="ovSubs" placeholder="子域如 012" style="width:64px">
-   <button id="ovAdd">添加</button>
- </div>
+ <span id="hint">拖动 / 滚轮缩放 · 双击放大</span>
 </div>
 <div id="map"></div>
-<div id="hint">拖动平移 · 滚轮缩放 · 双击放大</div>
 <script>
 const CFG = __CFG__;
-const map = document.getElementById('map');
-const zoomLabel = document.getElementById('zoom');
-document.getElementById('meta').textContent =
-  ` ${CFG.w}×${CFG.h}px · 瓦片 ${CFG.t}px`;
-// 右上角信息徽章：层级范围 + 排列方式
-document.getElementById('badge').textContent = `Z${CFG.zmin}–Z${CFG.zmax} · ${CFG.tms?'TMS':'XYZ'}`;
-document.getElementById('badge').style.cssText='font-size:12px;font-weight:700;color:#8fb4ff;background:#4f8cff22;border:1px solid #4f8cff44;border-radius:999px;padding:4px 10px';
 
-// 视图状态：(cx,cy) 为视口中心，单位 = 基础级(z=zmax)像素；scale = 屏幕 px / 基础级 px
-let scale = 1, cx = 0, cy = 0;
-const cache = new Set();
-const imgs = [];
-// 前置声明：apply() 首帧（fit→apply）就会触达这些绑定，必须先于调用点初始化
-let curL=null; let tsGuard=0; let ovImgs=[]; let overlays=[];
+// ---- 世界网格 → 经纬度（EPSG:3857 XYZ/TMS 惯例）----
+function nn(z){ return Math.pow(2, z); }
+function tileLL(x, y, z){
+  const n = nn(z);
+  const lon = x / n * 360 - 180;
+  const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
+  return [lat, lon];
+}
 
-function lvlMeta(){
-  const want = Math.round(CFG.zmax - Math.log2(scale));
-  let best = CFG.levels[0];
-  for(const l of CFG.levels){ if(l.z === Math.min(CFG.zmax, Math.max(CFG.zmin, want))) best = l; }
-  return best || CFG.levels[CFG.levels.length-1];
-}
-// 每级的世界网格信息（相对模式 ox=oy=0）
-function lvGrid(L){ return { ox:L.ox||0, oy:L.oy||0, wy:L.wy||Math.pow(2,L.z)||1 }; }
-// 基础级（z=zmax）条目
-function baseLv(){ return CFG.levels.find(l=>l.z===CFG.zmax) || CFG.levels[CFG.levels.length-1]; }
-// 瓦片包围盒：基础级像素坐标 [x0,y0]~[x1,y1]
-let BBOX = null;
-function tileBBox(){
-  if(BBOX) return BBOX;
-  const B = baseLv(); if(!B) return {x0:0,y0:0,x1:CFG.w,y1:CFG.h};
-  const g = lvGrid(B);
-  return BBOX = { x0:g.ox*CFG.t, y0:g.oy*CFG.t, x1:(g.ox+B.tx)*CFG.t, y1:(g.oy+B.ty)*CFG.t };
-}
-// 某级别的一块瓦片在基础级像素系中的边长
-function tileSpan(L){ return CFG.t * Math.pow(2, CFG.zmax - L.z); }
-function apply(){
-  // 清理上一帧
-  for(const el of imgs) el.remove(); imgs.length = 0;
-  const L = lvlMeta();
-  const G = lvGrid(L);
-  const vw = map.clientWidth, vh = map.clientHeight;
-  const W = tileSpan(L);                       // 该级一块瓦片的基础级像素边长
-  const ts = CFG.t * scale * Math.pow(2, CFG.zmax - L.z);   // 屏幕上瓦片边长
-  tsGuard = ts;
-  if(ts < 4){ zoomLabel.textContent = `${(scale*100)|0}%`; return; }
-  const left = cx - vw/2/scale, top = cy - vh/2/scale;   // 基础级像素视口左上
-  // 视口覆盖的世界网格范围 → 与本级边界求交（全部是世界编号）
-  const wx0 = Math.max(G.ox,     Math.floor(left / W));
-  const wx1 = Math.min(G.ox+L.tx-1, Math.floor((left + vw/scale) / W));
-  const wy0 = Math.max(G.oy,     Math.floor(top / W));
-  const wy1 = Math.min(G.oy+L.ty-1, Math.floor((top + vh/scale) / W));
-  for(let wyz=wy0; wyz<=wy1; wyz++){
-    for(let wx=wx0; wx<=wx1; wx++){
-      const dy = CFG.tms ? (G.wy - 1 - wyz) : wyz;
-      const sx = (wx*W - left)*scale, sy = (wyz*W - top)*scale;
-      let img = new Image();
-      img.className='tile';
-      img.style.left = sx+'px'; img.style.top = sy+'px';
-      img.style.width = (ts+1)+'px'; img.style.height=(ts+1)+'px';
-      img.src = `${L.z}/${wx}/${dy}.png`;
-      // 中断的任务可能缺块：静默移除，避免碎图标与控制台噪音
-      img.onerror=()=>img.remove();
-      map.appendChild(img); imgs.push(img);
-    }
+if (typeof L === 'undefined') {
+  document.getElementById('map').innerHTML =
+    '<div class="offline">Leaflet 未能从 CDN 加载（离线？）。瓦片本身完好，可稍后重试或直接浏览 {z}/{x}/{y}.png 目录。</div>';
+} else {
+  document.getElementById('badge').textContent =
+    `Z${CFG.zmin}–Z${CFG.zmax} · ${CFG.tms?'TMS':'XYZ'} · ${CFG.t}px`;
+
+  // ---- 本地瓦片层 ----
+  const B = CFG.levels.find(l => l.z === CFG.zmax) || CFG.levels[CFG.levels.length - 1] || {ox:0, oy:0, tx:1, ty:1, z:CFG.zmax};
+  const bo = { ox: B.ox || 0, oy: B.oy || 0 };
+  // 瓦片包围盒的地理角点：SW=(左下) NE=(右上)；TMS 的 oy 即 XYZ 行号起点
+  const swCorner = tileLL(bo.ox,        bo.oy + B.ty, B.z);
+  const neCorner = tileLL(bo.ox + B.tx, bo.oy,        B.z);
+  const bbox = L.latLngBounds(swCorner, neCorner);
+
+  const map = L.map('map', { zoomSnap: 0.25, zoomDelta: 0.5 });
+  map.attributionControl.setPrefix('Leaflet');
+
+  const localOpts = {
+    tms: !!CFG.tms,
+    tileSize: CFG.t,
+    minZoom: CFG.zmin,
+    maxZoom: CFG.zmax,
+    minNativeZoom: CFG.zmin,
+    maxNativeZoom: CFG.zmax,
+    noWrap: true,
+    bounds: bbox,
+    attribution: 'swCutter'
+  };
+  L.tileLayer('{z}/{x}/{y}.png', localOpts).addTo(map);
+
+  // ---- 在线图层（仅当设置启用了条目才会出现在 CFG.overlays）----
+  const ovs = (CFG.overlays || []).filter(o => o && o.on && o.tpl);
+  const items = [];
+  if (ovs.length) {
+    map.createPane('under').style.zIndex = 250;
+    map.createPane('over').style.zIndex  = 450;
+    ovs.forEach((o, i) => {
+      const tpl = String(o.tpl).replace(/\{tk\}/g, o.tk || '');
+      const subs = (o.subs && String(o.subs).length) ? String(o.subs).split('') : ['a'];
+      const layer = L.tileLayer(tpl, {
+        tms: !!o.tms,
+        opacity: (typeof o.opacity === 'number' ? o.opacity : 1),
+        minZoom: (o.zmin ?? 0),
+        maxZoom: (o.zmax ?? 22),
+        pane: o.below ? 'under' : 'over',
+        noWrap: true,
+        bounds: bbox,
+        subdomains: subs
+      }).addTo(map);
+      items.push({ name: o.name || ('layer' + i), layer });
+    });
+
+    const p = document.createElement('div');
+    p.id = 'ovp';
+    p.innerHTML = '<b style="font-size:12px">在线图层</b>' + items.map((it, i) =>
+      `<div><label><input type="checkbox" checked data-i="${i}"> ${it.name}</label>` +
+      `<input type="range" min="10" max="100" value="${Math.round((it.layer.options.opacity ?? 1) * 100)}" data-r="${i}"></div>`
+    ).join('');
+    document.body.appendChild(p);
+    p.querySelectorAll('input[data-i]').forEach(el => el.onchange = e => {
+      const it = items[+e.target.dataset.i];
+      if (e.target.checked) it.layer.addTo(map); else map.removeLayer(it.layer);
+    });
+    p.querySelectorAll('input[data-r]').forEach(el => el.oninput = e => {
+      items[+e.target.dataset.r].layer.setOpacity(+e.target.value / 100);
+    });
   }
-  drawOverlays(L, left, top, vw, vh);
-  zoomLabel.textContent = `${Math.round(scale*100)}% · L${L.z}`;
-}
-function clampCenter(){
-  const b = tileBBox();
-  cx = Math.max(b.x0, Math.min(b.x1, cx));
-  cy = Math.max(b.y0, Math.min(b.y1, cy));
-}
-function fit(){
-  const b = tileBBox();                       // 主动定位到瓦片包围盒
-  scale = Math.min(map.clientWidth/(b.x1-b.x0), map.clientHeight/(b.y1-b.y0));
-  if(!isFinite(scale) || scale<=0) scale = 1;
-  cx=(b.x0+b.x1)/2; cy=(b.y0+b.y1)/2; clampCenter(); apply();
-}
-function one(){ scale=1; apply(); }
-function zoomAt(f, mx, my){
-  const before = {x: cx + (mx - map.clientWidth/2)/scale,
-                  y: cy + (my - map.clientHeight/2)/scale};
-  scale = Math.min(64, Math.max(0.02, scale*f));
-  cx = before.x - (mx - map.clientWidth/2)/scale;
-  cy = before.y - (my - map.clientHeight/2)/scale;
-  clampCenter(); apply();
-}
-map.addEventListener('wheel', e=>{ e.preventDefault();
-  zoomAt(e.deltaY<0 ? 1.25 : 0.8, e.offsetX, e.offsetY);
-},{passive:false});
-let drag=null;
-map.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,cx,cy};map.classList.add('drag');map.setPointerCapture(e.pointerId);});
-map.addEventListener('pointermove',e=>{ if(!drag)return;
-  cx = drag.cx - (e.clientX-drag.x)/scale; cy = drag.cy - (e.clientY-drag.y)/scale;
-  clampCenter(); apply();});
-addEventListener('pointerup',()=>{drag=null;map.classList.remove('drag');});
-map.addEventListener('dblclick',e=>zoomAt(2,e.offsetX,e.offsetY));
-document.getElementById('in').onclick=()=>zoomAt(1.3,map.clientWidth/2,map.clientHeight/2);
-document.getElementById('out').onclick=()=>zoomAt(0.77,map.clientWidth/2,map.clientHeight/2);
-document.getElementById('fit').onclick=fit;
-document.getElementById('one').onclick=one;
-addEventListener('resize',apply);
-fit();
 
-/* ---------------- 在线叠加图层 ---------------- */
-const LS_KEY='swcutter_overlays', LS_TK='swcutter_tk';
-// 全局设置(CFG.overlays)优先；本页 localStorage 修改仅作回退/临时覆盖
-const cfgOv = Array.isArray(CFG.overlays) ? JSON.parse(JSON.stringify(CFG.overlays)) : [];
-overlays = cfgOv;
-try{
-  const parsed = JSON.parse(localStorage.getItem(LS_KEY)||'null');
-  if(!(cfgOv.length) && Array.isArray(parsed)) overlays = parsed;
-}catch(e){}
-const tkInput=document.getElementById('tkInput');
-tkInput.value = localStorage.getItem(LS_TK)||'';
-document.getElementById('saveTk').onclick=()=>{ localStorage.setItem(LS_TK, tkInput.value.trim()); renderOvList(); };
-document.getElementById('layersBtn').onclick=()=>{ const p=document.getElementById('panel'); p.hidden=!p.hidden; };
-
-function saveOverlays(){ localStorage.setItem(LS_KEY, JSON.stringify(overlays)); renderOvList(); apply(); }
-const TDT = t=>`https://t{s}.tianditu.gov.cn/DataServer?T=${t}&x={x}&y={y}&l={z}&tk={tk}`;
-const PRESETS={
-  tdtVec:{name:'天地图·矢量', tpl:TDT('vec_w'), subs:'01234567', tms:false},
-  tdtImg:{name:'天地图·影像', tpl:TDT('img_w'), subs:'01234567', tms:false},
-  osm:{name:'OpenStreetMap', tpl:'https://tile.openstreetmap.org/{z}/{x}/{y}.png', subs:'', tms:false},
-};
-document.getElementById('addPresetTdt').onclick=()=>addPreset('tdtVec');
-document.getElementById('addPresetImg').onclick=()=>addPreset('tdtImg');
-document.getElementById('addPresetOsm').onclick=()=>addPreset('osm');
-function addPreset(k){
-  if(overlays.some(o=>o.name===PRESETS[k].name)) return;
-  overlays.push({...PRESETS[k], opacity:0.55, on:true, zmin:2, zmax:18});
-  saveOverlays();
+  L.control.scale({ imperial: false }).addTo(map);
+  // ---- 主动定位到瓦片包围盒 ----
+  map.fitBounds(bbox, { padding: [24, 24] });
 }
-document.getElementById('ovAdd').onclick=()=>{
-  const name=document.getElementById('ovName').value.trim()||'自定义';
-  const tpl=document.getElementById('ovTpl').value.trim();
-  if(!tpl.includes('{x}')||!tpl.includes('{y}')){ alert('模板需包含 {x} 与 {y}'); return; }
-  overlays.push({name,tpl,subs:document.getElementById('ovSubs').value.trim(),
-                 tms:document.getElementById('ovTms').checked,opacity:0.55,on:true,zmin:0,zmax:22});
-  document.getElementById('ovName').value=''; document.getElementById('ovTpl').value='';
-  saveOverlays();
-};
-function renderOvList(){
-  const list=document.getElementById('ovList'); list.innerHTML='';
-  overlays.forEach((o,i)=>{
-    const div=document.createElement('div'); div.className='ovItem';
-    div.innerHTML=`<div class="row">
-      <label class="chk"><input type="checkbox" ${o.on?'checked':''} data-i="${i}" data-act="on"> ${o.name}</label>
-      <span style="flex:1"></span>
-      <span class="tag">${o.tms?'TMS':'XYZ'}${o.subs?` · s=${o.subs}`:''}</span>
-      <button data-i="${i}" data-act="del">删除</button></div>
-      <div class="row"><span class="tag">透明度</span>
-      <input type="range" min="10" max="100" value="${Math.round(o.opacity*100)}" data-i="${i}" data-act="op">
-      <button data-i="${i}" data-act="up">${o.on?'隐藏':'显示'}</button></div>`;
-    list.appendChild(div);
-  });
-  list.querySelectorAll('input[type=checkbox]').forEach(el=>el.onchange=e=>{overlays[+e.target.dataset.i].on=e.target.checked;saveOverlays();});
-  list.querySelectorAll('input[type=range]').forEach(el=>el.oninput=e=>{overlays[+e.target.dataset.i].opacity=+e.target.value/100;applySoft();});
-  list.querySelectorAll('button[data-act=del]').forEach(el=>el.onclick=e=>{overlays.splice(+e.target.dataset.i,1);saveOverlays();});
-  list.querySelectorAll('button[data-act=up]').forEach(el=>el.onclick=e=>{const o=overlays[+e.target.dataset.i];o.on=!o.on;saveOverlays();});
-}
-function applySoft(){ if(!curL) return;
-  for(const el of ovImgs){ const o=overlays[el._ovi]; if(o) el.style.opacity=o.opacity; } }
-
-function drawOverlays(L,left,top,vw,vh){
-  for(const el of ovImgs) el.remove(); ovImgs.length=0;
-  curL=L;
-  if(tsGuard<4) return;
-  const G = lvGrid(L);
-  const W = tileSpan(L);                     // 该级一块瓦片的基础级像素边长
-  const wx0 = Math.max(G.ox,     Math.floor(left / W));
-  const wx1 = Math.min(G.ox+L.tx-1, Math.floor((left + vw/scale) / W));
-  const wy0 = Math.max(G.oy,     Math.floor(top / W));
-  const wy1 = Math.min(G.oy+L.ty-1, Math.floor((top + vh/scale) / W));
-  overlays.forEach((o,oi)=>{
-    if(!o.on) return;
-    // 防护：空/非法模板会产生 img.src='' → 浏览器自引用页面 URL（file:// 下报 Unsafe attempt）
-    if(!o.tpl || typeof o.tpl!=='string' || !(o.tpl.includes('{x}')&&o.tpl.includes('{y}'))) return;
-    const tkv = localStorage.getItem(LS_TK) || o.tk || '';
-    let tpl=o.tpl.replace(/\{tk\}/g, tkv);
-    if(tpl.includes('{tk}')) return; // 无密钥不请求
-    const oz=Math.max(o.zmin??0, Math.min(o.zmax??22, L.z));
-    for(let wyz=wy0; wyz<=wy1; wyz++){
-      for(let wx=wx0; wx<=wx1; wx++){
-        // 底图与本地瓦片同一世界网格原点，天然对齐
-        const oy=o.tms? (Math.pow(2,oz)-1-wyz) : wyz;
-        let url=tpl.replace('{z}',oz).replace('{x}',wx).replace('{y}',oy);
-        if(o.subs&&o.subs.length){ url=url.replace('{s}', o.subs[(wx+wyz)%o.subs.length]); }
-        if(!url || url.startsWith('file:')) continue;
-        const img=new Image();
-        img.className = o.below ? 'ov ovb' : 'ov';
-        img.style.left=(wx*W-left)*scale+'px';
-        img.style.top=(wyz*W-top)*scale+'px';
-        img.style.width=(CFG.t*k+1)+'px'; img.style.height=(CFG.t*k+1)+'px';
-        img.style.opacity=o.opacity;
-        img.onerror=()=>img.remove();
-        img.src=url;
-        map.appendChild(img); ovImgs.push(img); img._ovi=oi;
-      }
-    }
-  });
-}
-renderOvList();
 </script></body></html>"#;
+
 
     let html = html.replace("__CFG__", &cfg_str);
     let p = out.join(PREVIEW_HTML_NAME);

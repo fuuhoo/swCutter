@@ -281,8 +281,8 @@ pub fn run_cut_with_control(
     };
     let ticker = thread::spawn(move || ticker_loop(ticker_state));
 
-    // ---- 巨型条带源：全图光栅共享（一次解码，逐 chunk 可取消）----
-    let shared_full: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new({
+    // ---- 巨型条带源：全图光栅共享 + mip 金字塔（逐级盒式平均，抗锯齿）----
+    let shared_full: Arc<Mutex<Option<Arc<FullMips>>>> = Arc::new(Mutex::new({
         let probe = SourceReader::open(&params.source);
         match probe {
             Ok(p) => {
@@ -293,8 +293,18 @@ pub fn run_cut_with_control(
                     && total_rgba <= 3 * 1024 * 1024 * 1024
                 {
                     let mut r = p;
+                    let (pw, ph) = (r.width, r.height);
                     match r.read_full_cancellable(Some(&control.cancel)) {
-                        Ok(buf) => Some(buf),
+                        Ok(buf) => match image::RgbaImage::from_raw(pw, ph, buf) {
+                            Some(img) => Some(Arc::new(build_mips(img))),
+                            None => {
+                                workers_done.store(true, Ordering::Relaxed);
+                                let _ = ticker.join();
+                                let s = summary_err("全图缓冲不匹配".into());
+                                emit(CutEvent::Done(s.clone()));
+                                return s;
+                            }
+                        },
                         Err(CoreError::Cancelled) => {
                             workers_done.store(true, Ordering::Relaxed);
                             let _ = ticker.join();
@@ -358,22 +368,18 @@ pub fn run_cut_with_control(
             // gdal2tiles 概览级：由上一级 4 块子瓦片降采样合成（源图只在基础级被读取）
             render_tile_overview(p_ref, job.z, job.tx, job.ty)
         } else if sf_full.lock().unwrap().is_some() {
-            // 巨型条带源：直接读共享全图（无解码竞争，取消/暂停即时生效）
+            // 巨型条带源：mip 金字塔采样（缩放比≤2，无锯齿无接缝）
             let guard = sf_full.lock().unwrap();
-            let full = guard.as_ref().expect("checked some");
+            let mips = guard.as_ref().expect("checked some");
             match (&pyramid, geo_ref) {
                 (Some(py), _) => render_tile_from_full(
-                    full,
-                    src_w,
-                    src_h,
+                    &mips,
                     p_ref,
                     &py.levels[job.plan_idx],
                     job.tx,
                     job.ty,
                 ),
-                (_, Some(g)) => render_tile_mercator_from_full(
-                    full, src_w, src_h, p_ref, g, job.z, job.tx, job.ty,
-                ),
+                (_, Some(g)) => render_tile_mercator_from_full(&mips, p_ref, g, job.z, job.tx, job.ty),
                 _ => Err(CoreError::InvalidInput("内部模式错误".into())),
             }
         } else {
@@ -578,11 +584,12 @@ fn render_tile_overview(params: &CutParams, z: u32, tx: u32, ty: u32) -> CoreRes
             }
         }
     }
+    // gdal2tiles 概览恒用 ANTIALIAS(Lanczos3)（--resampling 仅影响基础级）
     let out = image::imageops::resize(
         &canvas,
         t,
         t,
-        image::imageops::FilterType::Triangle,
+        image::imageops::FilterType::Lanczos3,
     );
     let mut rgba = out.into_raw();
     let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
@@ -659,7 +666,11 @@ fn render_tile_mercator(
     let mut img = image::RgbaImage::from_raw(iw.max(1), ih.max(1), crop)
         .ok_or_else(|| CoreError::Encoding("mercator 矩形缓冲不匹配".into()))?;
 
-        let flt = resample_filter(params.resample);
+        // 最终缩放对齐 gdal2tiles：非最近邻恒 ANTIALIAS(Lanczos3)
+    let flt = match params.resample {
+        Resample::Nearest => ImgFilter::Nearest,
+        _ => ImgFilter::Lanczos3,
+    };
     let out_img = if img.width() == params.tile_size && img.height() == params.tile_size {
         img
     } else if needs_smart(img.width(), img.height(), params.tile_size, params.tile_size) {
@@ -830,6 +841,97 @@ fn needs_smart(w: u32, h: u32, tw: u32, th: u32) -> bool {
     w >= tw.saturating_mul(4) && h >= th.saturating_mul(4)
 }
 
+// ---------------- 共享全图 mip 金字塔（抗锯齿核心） ----------------
+
+/// 共享全图 mip 链：lv[0]=原始分辨率，逐级 2× 盒式平均。
+/// 所有级别从「缩放比最接近 1 且 ≥1」的 mip 采样，杜绝大比例直接缩放的锯齿与接缝。
+pub(crate) struct FullMips {
+    /// 每级 (宽, 高)
+    pub dims: Vec<(u32, u32)>,
+    /// 每级 RGBA 缓冲
+    pub lv: Vec<Arc<Vec<u8>>>,
+}
+
+impl FullMips {
+    pub fn len(&self) -> usize {
+        self.lv.len()
+    }
+}
+
+/// 直通 alpha 的 2×2 盒式平均（边缘 clamp），输入输出均为 RGBA8 原始缓冲。
+fn halve2x_raw(px: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
+    let ow = w.div_ceil(2).max(1);
+    let oh = h.div_ceil(2).max(1);
+    let mut out = vec![0u8; ow * oh * 4];
+    for oy in 0..oh {
+        for ox in 0..ow {
+            let mut sr = 0u32;
+            let mut sg = 0u32;
+            let mut sb = 0u32;
+            let mut sa = 0u32;
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let x = ox * 2 + dx;
+                    let y = oy * 2 + dy;
+                    if x < w && y < h {
+                        let i = (y * w + x) * 4;
+                        let a = px[i + 3] as u32;
+                        sr += px[i] as u32 * a;
+                        sg += px[i + 1] as u32 * a;
+                        sb += px[i + 2] as u32 * a;
+                        sa += a;
+                    }
+                }
+            }
+            let di = (oy * ow + ox) * 4;
+            if sa > 0 {
+                out[di] = (sr / sa) as u8;
+                out[di + 1] = (sg / sa) as u8;
+                out[di + 2] = (sb / sa) as u8;
+            }
+            out[di + 3] = (sa / 4) as u8;
+        }
+    }
+    (out, ow, oh)
+}
+
+fn build_mips(img: image::RgbaImage) -> FullMips {
+    let mut w = img.width();
+    let mut h = img.height();
+    let mut dims = vec![(w, h)];
+    let mut lv = vec![Arc::new(img.into_raw())];
+    // 追加内存上限：mip 合计不超过首级的 50%
+    let base_bytes = (w as u64) * (h as u64) * 4;
+    let mut extra: u64 = 0;
+    while w.max(h) > 512 && lv.len() < 14 {
+        let cur = Arc::clone(lv.last().unwrap());
+        let (next, nw, nh) = halve2x_raw(&cur, w as usize, h as usize);
+        extra += (nw as u64) * (nh as u64) * 4;
+        if extra > base_bytes / 2 {
+            break;
+        }
+        lv.push(Arc::new(next));
+        dims.push((nw as u32, nh as u32));
+        w = nw as u32;
+        h = nh as u32;
+    }
+    FullMips { dims, lv }
+}
+
+/// 选择 mip 级别：保证该级上采样窗仍 ≥ 输出（持续降采样）且尽量接近 1:1。
+fn pick_k(span_full: i64, out_px: i64, n_levels: usize) -> usize {
+    let mut k = 0usize;
+    while k + 1 < n_levels {
+        let next_span = span_full >> (k + 1);
+        if next_span >= out_px.max(1) {
+            k += 1;
+        } else {
+            break;
+        }
+    }
+    k
+}
+
 fn render_tile(
     reader: &mut SourceReader,
     params: &CutParams,
@@ -871,13 +973,13 @@ fn render_tile(
     let cropped =
         image::imageops::crop_imm(&full, cx, cy, sw as u32, sh as u32).to_image();
 
-    // 重采样到目标尺寸（含放大级别）
+    // 重采样到目标尺寸（含放大级别）；最终缩放对齐 gdal2tiles：非最近邻恒 ANTIALIAS(Lanczos3)
     let out_img = if (sf - 1.0).abs() < f64::EPSILON && cropped.width() == out_w && cropped.height() == out_h {
         cropped
     } else {
         let filter = match params.resample {
             Resample::Nearest => ImgFilter::Nearest,
-            Resample::Bilinear => ImgFilter::Triangle,
+            _ => ImgFilter::Lanczos3,
         };
         image::imageops::resize(&cropped, out_w, out_h, filter)
     };
@@ -887,11 +989,40 @@ fn render_tile(
     write_tile_png(params, rgba, out_w, out_h, rel)
 }
 
-/// 相对模式 · 共享全图路径（巨型条带源）
+/// 从 mip 链采样并裁出矩形（全图坐标 → 选级 → 偏移裁剪），返回 (缓冲, 宽, 高, 有效区偏移, 有效区宽高)
+fn crop_from_mips(
+    mips: &FullMips,
+    rx: i64,
+    ry: i64,
+    rw: i64,
+    rh: i64,
+    out_px: i64,
+) -> (Vec<u8>, u32, u32, i64, i64, i64, i64) {
+    let span = rw.max(rh);
+    let k = pick_k(span, out_px, mips.len());
+    let (mw, mh) = mips.dims[k];
+    let buf = &mips.lv[k];
+    // 全图坐标 → mip 坐标，四周各留 1px 供滤波
+    let k2 = 1i64 << k;
+    let cx0 = ((rx / k2) - 1).max(0);
+    let cy0 = ((ry / k2) - 1).max(0);
+    let cw = ((((rx + rw) / k2) + 1).min(mw as i64) - cx0).max(1);
+    let ch = ((((ry + rh) / k2) + 1).min(mh as i64) - cy0).max(1);
+    let buf = copy_rect_from_full(buf, mw, mh, cx0, cy0, cw as u32, ch as u32);
+    (
+        buf,
+        cw as u32,
+        ch as u32,
+        (rx / k2) - cx0,
+        (ry / k2) - cy0,
+        ((rw + k2 - 1) / k2),
+        ((rh + k2 - 1) / k2),
+    )
+}
+
+/// 相对模式 · 共享 mip 金字塔采样
 fn render_tile_from_full(
-    full: &[u8],
-    src_w: u32,
-    src_h: u32,
+    mips: &FullMips,
     params: &CutParams,
     lp: &super::planner::LevelPlan,
     tx: u32,
@@ -906,44 +1037,41 @@ fn render_tile_from_full(
     let sf = lp.scale;
     let sx = (tx as f64 * t as f64 * sf).round() as i64;
     let sy = (ty as f64 * t as f64 * sf).round() as i64;
-    let sw = (((out_w as f64 * sf).ceil() as i64).min(src_w as i64 - sx)).max(1);
-    let sh = (((out_h as f64 * sf).ceil() as i64).min(src_h as i64 - sy)).max(1);
-    let pad: i64 = if sf > 1.0 { sf.ceil() as i64 } else { 1 };
-    let rx = sx - pad;
-    let ry = sy - pad;
-    let rw = (sw + pad * 2) as u32;
-    let rh = (sh + pad * 2) as u32;
+    let sw = (((out_w as f64 * sf).ceil() as i64)).max(1);
+    let sh = (((out_h as f64 * sf).ceil() as i64)).max(1);
 
-    let buf = copy_rect_from_full(full, src_w, src_h, rx, ry, rw, rh);
-    let img_full = image::RgbaImage::from_raw(rw, rh, buf)
-        .ok_or_else(|| CoreError::Encoding("缓冲不匹配".into()))?;
+    let (buf, cw, ch, offx, offy, swk, shk) =
+        crop_from_mips(mips, sx, sy, sw, sh, out_w.max(out_h) as i64);
+    let img = image::RgbaImage::from_raw(cw, ch, buf)
+        .ok_or_else(|| CoreError::Encoding("mip 缓冲不匹配".into()))?;
     let cropped = image::imageops::crop_imm(
-        &img_full,
-        (sx - rx) as u32,
-        (sy - ry) as u32,
-        sw as u32,
-        sh as u32,
+        &img,
+        offx.max(0) as u32,
+        offy.max(0) as u32,
+        (swk as u32).min(img.width() - offx.max(0) as u32),
+        (shk as u32).min(img.height() - offy.max(0) as u32),
     )
     .to_image();
-    let out_img = if (sf - 1.0).abs() < f64::EPSILON
-        && cropped.width() == out_w
-        && cropped.height() == out_h
-    {
+    // 最终缩放对齐 gdal2tiles：非最近邻恒 ANTIALIAS(Lanczos3)
+    let flt = match params.resample {
+        Resample::Nearest => ImgFilter::Nearest,
+        _ => ImgFilter::Lanczos3,
+    };
+    let out_img = if cropped.width() == out_w && cropped.height() == out_h {
         cropped
+    } else if needs_smart(cropped.width(), cropped.height(), out_w, out_h) {
+        smart_downscale(cropped, out_w, out_h, flt)
     } else {
-        image::imageops::resize(&cropped, out_w, out_h, resample_filter(params.resample))
+        image::imageops::resize(&cropped, out_w, out_h, flt)
     };
     let mut rgba = out_img.into_raw();
     let rel = writer::tile_rel_path(params.scheme, lp.level, tx, ty, lp.tiles_y);
     write_tile_png(params, rgba, out_w, out_h, rel)
 }
 
-/// Mercator 模式 · 共享全图路径
-#[allow(clippy::too_many_arguments)]
+/// Mercator 模式 · 共享 mip 金字塔采样
 fn render_tile_mercator_from_full(
-    full: &[u8],
-    src_w: u32,
-    src_h: u32,
+    mips: &FullMips,
     params: &CutParams,
     g: super::meta::GeoRef,
     z: u32,
@@ -961,30 +1089,39 @@ fn render_tile_mercator_from_full(
     let fy_top = (wy_top - g.my_top) / g.sy;
     let fy_bot = (wy_bot - g.my_top) / g.sy;
     let rx = fx0.min(fx1).floor() as i64;
-    let rw = ((fx0.max(fx1)).ceil() as i64 - rx).max(1) as u32;
+    let rw = ((fx0.max(fx1)).ceil() as i64 - rx).max(1);
     let ry = fy_top.min(fy_bot).floor() as i64;
-    let rh = ((fy_top.max(fy_bot)).ceil() as i64 - ry).max(1) as u32;
+    let rh = ((fy_top.max(fy_bot)).ceil() as i64 - ry).max(1);
 
-    let crop = copy_rect_from_full(full, src_w, src_h, rx, ry, rw, rh);
-    let w = rw.max(1);
-    let h = rh.max(1);
-    let img = image::RgbaImage::from_raw(w, h, crop)
-        .ok_or_else(|| CoreError::Encoding("mercator 缓冲不匹配".into()))?;
-    let out_img = if img.width() == params.tile_size && img.height() == params.tile_size {
-        img
+    let (buf, cw, ch, offx, offy, swk, shk) =
+        crop_from_mips(mips, rx, ry, rw, rh, params.tile_size as i64);
+    let img = image::RgbaImage::from_raw(cw, ch, buf)
+        .ok_or_else(|| CoreError::Encoding("mercator mip 缓冲不匹配".into()))?;
+    let cropped = image::imageops::crop_imm(
+        &img,
+        offx.max(0) as u32,
+        offy.max(0) as u32,
+        (swk as u32).min(img.width() - offx.max(0) as u32),
+        (shk as u32).min(img.height() - offy.max(0) as u32),
+    )
+    .to_image();
+    // 最终缩放对齐 gdal2tiles：非最近邻恒 ANTIALIAS(Lanczos3)
+    let flt = match params.resample {
+        Resample::Nearest => ImgFilter::Nearest,
+        _ => ImgFilter::Lanczos3,
+    };
+    let tt = params.tile_size;
+    let out_img = if cropped.width() == tt && cropped.height() == tt {
+        cropped
+    } else if needs_smart(cropped.width(), cropped.height(), tt, tt) {
+        smart_downscale(cropped, tt, tt, flt)
     } else {
-        image::imageops::resize(
-            &img,
-            params.tile_size,
-            params.tile_size,
-            resample_filter(params.resample),
-        )
+        image::imageops::resize(&cropped, tt, tt, flt)
     };
     let mut rgba = out_img.into_raw();
     let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
-    write_tile_png(params, rgba, params.tile_size, params.tile_size, rel)
+    write_tile_png(params, rgba, tt, tt, rel)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

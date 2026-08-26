@@ -183,12 +183,16 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
       if (ok != true) return;
     }
     final failures = <String>[];
-    // 预览底图配置：全局设置注入每个 preview.html（天地图模板自动带上 tk）
-    final overlaysJson = jsonEncode(app.baseMaps.map((m) {
-      final e = Map<String, dynamic>.from(m);
-      if ((e['tpl'] as String).contains('{tk}')) e['tk'] = app.tiandituTk;
-      return e;
-    }).toList());
+    // 预览底图配置：仅注入「设置中已启用」的条目（全部关闭 → 空数组，页面零在线依赖）
+    final overlaysJson = jsonEncode(
+        app.baseMaps
+            .where((m) => m['on'] == true)
+            .map((m) {
+              final e = Map<String, dynamic>.from(m);
+              if ((e['tpl'] as String).contains('{tk}')) e['tk'] = app.tiandituTk;
+              return e;
+            })
+            .toList());
     for (final d in List<TaskDraft>.from(store.drafts)) {
       try {
         // 全局设置同步（瓦片尺寸/跳过透明/重采样在「设置」页维护）
