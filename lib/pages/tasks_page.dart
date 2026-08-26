@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../state/app_state.dart';
 import '../widgets/task_card.dart';
 import '../src/rust/api/task_api.dart' as rust;
+import '../src/rust/api/preview_server.dart' as pserver;
 
 /// 任务中心：所有切片任务的进度与操作。
 class TasksPage extends ConsumerWidget {
@@ -142,7 +143,17 @@ class TasksPage extends ConsumerWidget {
           backgroundColor: Theme.of(context).colorScheme.error));
       return;
     }
-    await launchUrl(Uri.file(html), mode: LaunchMode.externalApplication);
+    try {
+      // 内置静态服务（http://127.0.0.1 随机端口），绕开 file:// 唯一源限制
+      final port = await pserver.previewServe(dir: output);
+      await launchUrl(
+        Uri.parse('http://127.0.0.1:$port/'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (e) {
+      // 服务失败时回退 file:// 直接打开
+      await launchUrl(Uri.file(html), mode: LaunchMode.externalApplication);
+    }
   }
 }
 

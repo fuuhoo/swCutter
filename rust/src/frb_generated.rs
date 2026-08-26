@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1147638376;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 905241430;
 
 // Section: executor
 
@@ -438,6 +438,41 @@ fn wire__crate__api__task_api__pause_task_impl(
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || {
                         let output_ok = crate::api::task_api::pause_task(api_id)?;
+                        std::result::Result::Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__preview_server__preview_serve_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "preview_serve",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::preview_server::preview_serve(api_dir)?;
                         std::result::Result::Ok(output_ok)
                     })(),
                 )
@@ -1178,6 +1213,13 @@ impl SseDecode for crate::api::task_api::TaskSummary {
     }
 }
 
+impl SseDecode for u16 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_u16::<NativeEndian>().unwrap()
+    }
+}
+
 impl SseDecode for u32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1227,16 +1269,19 @@ fn pde_ffi_dispatcher_primary_impl(
         9 => wire__crate__api__history_store__load_impl(port, ptr, rust_vec_len, data_len),
         10 => wire__crate__api__task_api__make_preview_impl(port, ptr, rust_vec_len, data_len),
         11 => wire__crate__api__task_api__pause_task_impl(port, ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__task_api__read_image_info_impl(port, ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__task_api__remove_task_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__task_api__resume_task_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__task_api__sample_pixel_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__history_store__save_impl(port, ptr, rust_vec_len, data_len),
-        17 => {
+        12 => {
+            wire__crate__api__preview_server__preview_serve_impl(port, ptr, rust_vec_len, data_len)
+        }
+        13 => wire__crate__api__task_api__read_image_info_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__task_api__remove_task_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__task_api__resume_task_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__task_api__sample_pixel_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__history_store__save_impl(port, ptr, rust_vec_len, data_len),
+        18 => {
             wire__crate__api__task_api__set_max_concurrency_impl(port, ptr, rust_vec_len, data_len)
         }
-        18 => wire__crate__api__task_api__start_task_impl(port, ptr, rust_vec_len, data_len),
-        19 => wire__crate__api__task_api__subscribe_events_impl(port, ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__task_api__start_task_impl(port, ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__task_api__subscribe_events_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1934,6 +1979,13 @@ impl SseEncode for crate::api::task_api::TaskSummary {
         <u64>::sse_encode(self.elapsed_ms, serializer);
         <bool>::sse_encode(self.cancelled, serializer);
         <Option<String>>::sse_encode(self.error, serializer);
+    }
+}
+
+impl SseEncode for u16 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_u16::<NativeEndian>(self).unwrap();
     }
 }
 

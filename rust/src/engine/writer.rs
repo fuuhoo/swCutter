@@ -309,6 +309,8 @@ function drawOverlays(L,left,top,vw,vh,k){
   const lx0=Math.max(0, Math.floor(left/CFG.t)), ly0=Math.max(0, Math.floor(top/CFG.t));
   overlays.forEach((o,oi)=>{
     if(!o.on) return;
+    // 防护：空/非法模板会产生 img.src='' → 浏览器自引用页面 URL（file:// 下报 Unsafe attempt）
+    if(!o.tpl || typeof o.tpl!=='string' || !(o.tpl.includes('{x}')&&o.tpl.includes('{y}'))) return;
     const tkv = localStorage.getItem(LS_TK) || o.tk || '';
     let tpl=o.tpl.replace(/\{tk\}/g, tkv);
     if(tpl.includes('{tk}')) return; // 无密钥不请求
@@ -319,6 +321,7 @@ function drawOverlays(L,left,top,vw,vh,k){
         const oy=flip!=null? flip-ty : ty;
         let url=tpl.replace('{z}',oz).replace('{x}',tx).replace('{y}',oy);
         if(o.subs&&o.subs.length){ url=url.replace('{s}', o.subs[(tx+ty)%o.subs.length]); }
+        if(!url || url.startsWith('file:')) continue;
         const img=new Image();
         img.className = o.below ? 'ov ovb' : 'ov';
         img.style.left=(tx*CFG.t-left)*scale+'px';

@@ -272,17 +272,35 @@ pub fn run_cut_with_control(
     };
     let ticker = thread::spawn(move || ticker_loop(ticker_state));
 
-    // ---- 巨型条带源：全图光栅共享（一次解码，避免每瓦片重复解压整条带）----
+    // ---- 巨型条带源：全图光栅共享（一次解码，逐 chunk 可取消）----
     let shared_full: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new({
         let probe = SourceReader::open(&params.source);
         match probe {
             Ok(p) => {
                 let gb = p.giant_strip_bytes();
                 let total_rgba = p.width as u64 * p.height as u64 * 4;
-                if gb > 32 * 1024 * 1024 && total_rgba <= 3 * 1024 * 1024 * 1024 {
+                if !control.cancel.load(Ordering::Relaxed)
+                    && gb > 32 * 1024 * 1024
+                    && total_rgba <= 3 * 1024 * 1024 * 1024
+                {
                     let mut r = p;
-                    match r.read_full() {
+                    match r.read_full_cancellable(Some(&control.cancel)) {
                         Ok(buf) => Some(buf),
+                        Err(CoreError::Cancelled) => {
+                            workers_done.store(true, Ordering::Relaxed);
+                            let _ = ticker.join();
+                            let s = CutSummary {
+                                output_dir: params.output.display().to_string(),
+                                total_tiles: total as u64,
+                                bytes_written: 0,
+                                elapsed_ms: started.elapsed().as_millis() as u64,
+                                cancelled: true,
+                                errors: Vec::new(),
+                                levels: vec![],
+                            };
+                            emit(CutEvent::Done(s.clone()));
+                            return s;
+                        }
                         Err(e) => {
                             workers_done.store(true, Ordering::Relaxed);
                             let _ = ticker.join();

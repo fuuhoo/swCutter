@@ -4,6 +4,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ::tiff::decoder::{ChunkType, Decoder};
 use ::tiff::ColorType;
@@ -117,10 +118,16 @@ impl SourceReader {
 
     /// 整图 RGBA（一次性拼装全部 chunk，绕过 LRU）。
     /// 用于巨型条带源：与其每块瓦片重复解压，不如全图驻留一份共享。
-    pub fn read_full(&mut self) -> CoreResult<Vec<u8>> {
+    /// `cancel`：可选取消旗标——逐 chunk 检查，命中即返回 Cancelled。
+    pub fn read_full_cancellable(&mut self, cancel: Option<&AtomicBool>) -> CoreResult<Vec<u8>> {
         let (w, h) = (self.width as usize, self.height as usize);
         let mut out = vec![0u8; w * h * 4];
         for ci in 0..self.chunk_count {
+            if let Some(f) = cancel {
+                if f.load(Ordering::Relaxed) {
+                    return Err(CoreError::Cancelled);
+                }
+            }
             let (cox, coy) = self.chunk_origin(ci);
             if cox >= self.width || coy >= self.height {
                 continue;
@@ -325,7 +332,7 @@ pub fn full_raster_if_giant(path: &Path) -> CoreResult<Option<std::sync::Arc<Vec
     if gb <= 32 * 1024 * 1024 || total > 3 * 1024 * 1024 * 1024 {
         return Ok(None);
     }
-    let buf = std::sync::Arc::new(r.read_full()?);
+    let buf = std::sync::Arc::new(r.read_full_cancellable(None)?);
     let arc = std::sync::Arc::clone(&buf);
     full_cache().lock().unwrap().push((key, buf));
     Ok(Some(arc))
