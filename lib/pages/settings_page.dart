@@ -7,36 +7,14 @@ import '../src/rust/engine/planner.dart';
 import '../version.dart';
 
 /// 底图预设（XYZ 模板；天地图模板含 {tk} 占位，生成预览时注入密钥）
+///
+/// 注意：只使用**未经加密**的坐标系（EPSG:3857 / WGS84 / CGCS2000）。
+/// GCJ-02（火星）和 BD-09 系底图（高德、腾讯、百度）与项目切片坐标系不一致，
+/// 不要加入，否则会造成系统性位置偏移。
 const List<Map<String, String>> kBasemapPresets = [
   {
     'name': 'OpenStreetMap',
     'tpl': 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-  },
-  {
-    'name': 'ArcGIS·卫星影像',
-    'tpl':
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-  },
-  {
-    'name': '谷歌·卫星',
-    'tpl': 'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-    'subs': '0123',
-  },
-  {
-    'name': '谷歌·矢量',
-    'tpl': 'https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
-    'subs': '0123',
-  },
-  {
-    'name': '高德·矢量',
-    'tpl':
-        'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
-    'subs': '1234',
-  },
-  {
-    'name': '天地图·矢量',
-    'tpl': 'https://t{s}.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk={tk}',
-    'subs': '01234567',
   },
   {
     'name': '天地图·影像',
@@ -256,8 +234,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 const SizedBox(height: 6),
                 Text('写入每个 preview.html 作为默认底图/叠加层。'
                     '点击预设即添加（再次点击移除，已添加显示 ✓）。'
-                    '公开免密钥：OpenStreetMap（矢量，默认启用）、ArcGIS World Imagery（卫星）；'
-                    '谷歌无需密钥但请注意其服务条款；需要密钥的服务（如天地图）统一在下方「密钥设置」中维护。',
+                    '底图均使用 EPSG:3857（球面墨卡托，与 GeoTIFF 切片坐标系一致，'
+                    'WGS84 / CGCS2000 椭球差异 < 1cm）。'
+                    '免密钥：OpenStreetMap（矢量，默认启用）；'
+                    '天地图影像需要密钥（下方「密钥设置」中填入 tk）。',
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
                 const SizedBox(height: 10),
                 Wrap(spacing: 8, runSpacing: 8, children: [

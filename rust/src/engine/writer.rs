@@ -307,7 +307,7 @@ try {
         type: 'raster',
         tiles: tiles,
         tileSize: 256,
-        bounds: [sw[0], sw[1], ne[0], ne[1]],
+        // 不设 bounds：底图全球可见，镜头拖到哪里都加载（前提 zmin/zmax 范围内）
         scheme: o.tms ? 'tms' : 'xyz'
       });
       // 关键：底图（below=true）插在本地瓦片之前→本地瓦片盖在上面；
