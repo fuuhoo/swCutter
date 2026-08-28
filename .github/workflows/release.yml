@@ -149,15 +149,16 @@ jobs:
 
             # 在产物目录里放一份安装说明
             $notesPath = "$env:RUNNER_TEMP\RELEASE_NOTES.txt"
-            $notes = @"
-swCutter v$version (Windows x64)
-==================================
-
-解压后双击 `sw_cutter.exe` 运行。首次启动若弹出 SmartScreen 警告，
-点击"更多信息" → "仍要运行" 即可。
-
-完整源代码与跨平台说明见 https://github.com/$env:REPO_FULL_NAME
-"@
+            # 不使用 here-string（避免 PowerShell 变量与 YAML 解析器冲突），
+            # 改用普通字符串拼接。装饰线用 '*' 字符，避开 YAML 误识别的
+            # '=====' / '----'。
+            $notes = "swCutter v$version (Windows x64)`n"
+            $notes += ("* " * 27) + "`n"
+            $notes += "`n"
+            $notes += "解压后双击 `sw_cutter.exe` 运行。首次启动若弹出 SmartScreen 警告，`n"
+            $notes += "点击`"更多信息`" → `"仍要运行`" 即可。`n"
+            $notes += "`n"
+            $notes += "完整源代码与跨平台说明见 https://github.com/$env:REPO_FULL_NAME`n"
             Set-Content -Path $notesPath -Value $notes -Encoding UTF8
             Copy-Item $notesPath "$src\RELEASE_NOTES.txt"
 
