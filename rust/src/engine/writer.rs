@@ -136,6 +136,24 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
  <span id="hint">拖动 / 滚轮缩放</span>
 </div>
 <div id="map"></div>
+<div id="diagPanel" style="position:absolute;left:10px;bottom:10px;z-index:1500;background:#171c26f2;border:1px solid #ffffff20;border-radius:10px;padding:8px 12px;font:11px/1.5 ui-monospace,monospace;color:#cfd6e4;max-width:540px;display:flex;flex-direction:column;gap:4px">
+  <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <b style="color:#8fb4ff">诊断</b>
+    <label style="display:flex;gap:4px;align-items:center;cursor:pointer">
+      <input type="checkbox" id="toggleLocal" checked /> 显示切片
+    </label>
+    <label style="display:flex;gap:4px;align-items:center">
+      切片透明度 <input type="range" id="localOpacity" min="0" max="100" value="100" style="width:90px;accent-color:#4f8cff" />
+    </label>
+    <button id="recenterBtn" style="margin-left:auto;background:#4f8cff22;border:1px solid #4f8cff44;color:#8fb4ff;border-radius:6px;padding:2px 8px;cursor:pointer;font:11px">↺ 回到切片范围</button>
+  </div>
+  <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 10px">
+    <span style="color:#7a8699">鼠标位置</span><span id="mouseLL" style="color:#dfe5ef">—</span>
+    <span style="color:#7a8699">鼠标瓦片</span><span id="mouseTile" style="color:#dfe5ef">—</span>
+    <span style="color:#7a8699">当前 Z</span><span id="currentZ" style="color:#dfe5ef">—</span>
+  </div>
+  <pre id="diagInfo" style="margin:0;white-space:pre-wrap;color:#a8b3c5;font:10.5px/1.5 ui-monospace,monospace"></pre>
+</div>
 <script>
 const CFG = __CFG__;
 
@@ -158,6 +176,7 @@ try {
     'Z' + CFG.zmin + '–Z' + CFG.zmax + ' · ' + (CFG.tms?'TMS':'XYZ') + ' · ' + CFG.t + 'px';
 
   // ---- 瓦片坐标 → 经纬度 ----
+  // 假设 x/y ∈ [0, 2^z] 范围；mercator 模式下 ox/oy 由 mercator.rs 保证此约束。
   function tileLL(x, y, z) {
     const n = Math.pow(2, z);
     const lon = x / n * 360 - 180;
@@ -171,6 +190,24 @@ try {
   var sw = tileLL(bo.ox, bo.oy + B.ty, B.z);
   var ne = tileLL(bo.ox + B.tx, bo.oy, B.z);
   var bounds = [sw, ne]; // [[west, south], [east, north]]
+
+  // ---- 诊断面板：诊断坐标系 / 切片 / 底图对齐 ----
+  var diag = {
+    bounds: bounds,
+    center: [(sw[0] + ne[0]) / 2, (sw[1] + ne[1]) / 2],
+    ox: bo.ox, oy: bo.oy,
+    tx: B.tx, ty: B.ty, z: B.z,
+    wy: B.wy,
+    scheme: CFG.tms ? 'tms' : 'xyz',
+    localZmin: CFG.zmin, localZmax: CFG.zmax,
+    overlays: (CFG.overlays||[]).map(function(o){ return {name:o.name, on:!!o.on, below:o.below!==false, zmin:o.zmin, zmax:o.zmax, tms:o.tms}; })
+  };
+  document.getElementById('diagInfo').textContent =
+    '切片范围 sw=' + JSON.stringify({lon: +sw[0].toFixed(4), lat: +sw[1].toFixed(4)}) +
+    '  ne=' + JSON.stringify({lon: +ne[0].toFixed(4), lat: +ne[1].toFixed(4)}) +
+    '\n切片 Z[' + CFG.zmin + ',' + CFG.zmax + ']  scheme=' + (CFG.tms?'TMS':'XYZ') +
+    '  当前 L.B=' + bo.ox + ',' + bo.oy + '  size=' + B.tx + 'x' + B.ty + ' (z=' + B.z + ')' +
+    '\n底图：' + (CFG.overlays||[]).map(function(o){return (o.on?'✓':'✗')+' '+o.name+' [z'+o.zmin+'-'+o.zmax+' '+(o.tms?'TMS':'XYZ')+']';}).join(' | ');
 
   // ---- 初始化 MapLibre ----
   var map = new maplibregl.Map({
@@ -220,9 +257,36 @@ try {
       var z = map.getZoom();
       var rounded = Math.round(z * 4) / 4;
       document.getElementById('zlvl').textContent = '当前 Z' + (rounded % 1 ? rounded.toFixed(2) : rounded);
+      document.getElementById('currentZ').textContent = rounded.toFixed(2) + ' (整数 Z = ' + Math.round(z) + ')';
     }
     map.on('zoom', updateZoom);
     updateZoom();
+
+    // ---- 诊断面板交互 ----
+    // 鼠标经纬度 + 瓦片坐标
+    map.on('mousemove', function(e) {
+      var lon = e.lngLat.lng, lat = e.lngLat.lat;
+      var z = Math.round(map.getZoom());
+      var n = Math.pow(2, z);
+      var x = Math.floor((lon + 180) / 360 * n);
+      var y = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * n);
+      document.getElementById('mouseLL').textContent = lon.toFixed(5) + '°E, ' + lat.toFixed(5) + '°N';
+      document.getElementById('mouseTile').textContent = 'z=' + z + '  x=' + x + '  y=' + y;
+    });
+    // 显隐本地瓦片
+    document.getElementById('toggleLocal').addEventListener('change', function(e) {
+      var vis = e.target.checked ? 'visible' : 'none';
+      map.setLayoutProperty('local-tiles-layer', 'visibility', vis);
+    });
+    // 切片透明度
+    document.getElementById('localOpacity').addEventListener('input', function(e) {
+      var op = +e.target.value / 100;
+      map.setPaintProperty('local-tiles-layer', 'raster-opacity', op);
+    });
+    // 回到切片范围
+    document.getElementById('recenterBtn').addEventListener('click', function() {
+      map.fitBounds(bounds, {padding: 24});
+    });
 
     // 在线图层（已在 Dart 端按 on=true 过滤；此处按 below 决定 z-order）
     var ovs = (CFG.overlays || []).filter(function(o) { return o && o.on && o.tpl; });
@@ -430,5 +494,28 @@ mod tests {
         let html = std::fs::read_to_string(out.join(PREVIEW_HTML_NAME)).unwrap();
         assert!(html.contains("maplibregl.Map"));
         assert!(!html.contains("id=\"ovp\""));
+    }
+
+    /// 诊断面板：必须包含鼠标经纬度、瓦片坐标、显隐开关、回到切片范围按钮
+    #[test]
+    fn preview_html_has_diagnostic_panel() {
+        let out = temp_out("diag");
+        write_preview_html(&out, &info_with("[]")).unwrap();
+        let html = std::fs::read_to_string(out.join(PREVIEW_HTML_NAME)).unwrap();
+
+        // 关键 UI 元素（用于诊断坐标系对齐问题）
+        assert!(html.contains("id=\"diagPanel\""), "必须有诊断面板容器");
+        assert!(html.contains("id=\"mouseLL\""),    "必须显示鼠标经纬度");
+        assert!(html.contains("id=\"mouseTile\""),  "必须显示鼠标瓦片坐标");
+        assert!(html.contains("id=\"currentZ\""),   "必须显示当前 Z");
+        assert!(html.contains("id=\"toggleLocal\""),"必须有切片显隐开关");
+        assert!(html.contains("id=\"recenterBtn\""),"必须有回到切片范围按钮");
+        assert!(html.contains("id=\"diagInfo\""),   "必须显示切片 bounds/底图概要");
+
+        // 鼠标交互逻辑
+        assert!(html.contains("map.on('mousemove'"),
+            "必须监听鼠标移动以更新经纬度显示");
+        assert!(html.contains("toggleLocal').addEventListener"),
+            "显隐开关必须绑定事件（切换 local-tiles-layer 的 visibility）");
     }
 }
