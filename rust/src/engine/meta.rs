@@ -110,14 +110,6 @@ fn parse_georef_epsg(keys: &[u32]) -> Option<u32> {
 
 /// EPSG:3857 常量
 const ORIGIN_SHIFT: f64 = 20_037_508.342_789_244;
-const EARTH_RADIUS: f64 = 6_378_137.0;
-
-/// 地理坐标（度）→ EPSG:3857（米）
-fn lonlat_to_3857(lon: f64, lat: f64) -> (f64, f64) {
-    let x = lon * ORIGIN_SHIFT / 180.0;
-    let y = ((90.0 + lat) * std::f64::consts::PI / 360.0).tan().ln() * ORIGIN_SHIFT / std::f64::consts::PI;
-    (x, y)
-}
 
 /// EPSG:3857（米）→ 地理坐标（度）
 fn _3857_to_lonlat(mx: f64, my: f64) -> (f64, f64) {
@@ -128,56 +120,33 @@ fn _3857_to_lonlat(mx: f64, my: f64) -> (f64, f64) {
     (lon, lat)
 }
 
-/// UTM → 地理坐标（lon/lat 度）
-///
-/// 实现 USGS Convert ECQ 内置的 UTM 正算反算。
-/// `zone`: 1–60, `is_north`: true = 北半球
-fn utm_to_lonlat(easting: f64, northing: f64, zone: u32, is_north: bool) -> (f64, f64) {
-    // WGS84 椭球
-    let a = 6_378_137.0_f64;
-    let f = 1.0 / 298.257_223_563;
-    let k0 = 0.9996;
-    let e = f * (2.0_f64 - f).sqrt();
-    let e2 = e * e;
-    let ep2 = e2 / (1.0 - e2);
+/// UTM zone 的 PROJ.4 字符串（`+south` 让 PROJ 自动处理 10 000 000 假北）。
+fn utm_proj_string(zone: u32, is_north: bool) -> String {
+    format!(
+        "+proj=utm +zone={zone} +datum=WGS84 +units=m +no_defs +type=crs{}",
+        if is_north { "" } else { " +south" }
+    )
+}
 
-    let cm = (zone as f64 - 1.0) * 6.0 - 180.0 + 3.0; // 中央经线（度）
-    let x = easting - 500_000.0; // 去掉假东
-    let y = if is_north { northing } else { northing - 10_000_000.0 };
+/// EPSG:3857 (Web Mercator) PROJ.4 字符串。球面公式，与 gdal/PROJ 默认一致。
+const WEB_MERC_PROJ: &str = "+proj=merc +a=6378137 +b=6378137 +lat_ts=0 \
+    +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +wktext +no_defs +type=crs";
 
-    let m = y / k0;
-    let mu = m / (a * (1.0 - e2 / 4.0 - 3.0 * e2 * e2 / 64.0 - 5.0 * e2 * e2 * e2 / 256.0));
+/// EPSG:4326 (WGS84 经纬度) PROJ.4 字符串。proj4rs 期望 (lon, lat) 弧度。
+const WGS84_GEOGR_PROJ: &str =
+    "+proj=longlat +datum=WGS84 +no_defs +type=crs";
 
-    let phi1 = mu
-        + (3.0 * e / 2.0 - 27.0 * e * e * e / 32.0) * (2.0 * mu).sin()
-        + (21.0 * e * e / 16.0 - 55.0 * e * e * e * e / 32.0) * (4.0 * mu).sin()
-        + (151.0 * e * e * e / 96.0) * (6.0 * mu).sin()
-        + (1097.0 * e * e * e * e / 512.0) * (8.0 * mu).sin();
-
-    let n1 = a / (1.0 - e2 * phi1.sin() * phi1.sin()).sqrt();
-    let t1 = phi1.tan();
-    let t1sq = t1 * t1;
-    let c1 = ep2 * phi1.cos() * phi1.cos();
-    let r1 = a * (1.0 - e2) / (1.0 - e2 * phi1.sin() * phi1.sin()).powf(1.5);
-    let d = x / (n1 * k0);
-
-    let lat_rad = phi1
-        - (n1 * t1 / r1)
-            * (d * d / 2.0
-                - (5.0 + 3.0 * t1sq + 10.0 * c1 - 4.0 * c1 * c1 - 9.0 * ep2) * d * d * d * d / 24.0
-                + (61.0 + 90.0 * t1sq + 298.0 * c1 + 45.0 * t1sq * t1sq - 252.0 * ep2 - 3.0 * c1 * c1)
-                    * d * d * d * d * d * d
-                    / 720.0);
-
-    let lon_rad = cm.to_radians()
-        + (d
-            - (1.0 + 2.0 * t1sq + c1) * d * d * d / 6.0
-            + (5.0 - 2.0 * c1 + 28.0 * t1sq - 3.0 * c1 * c1 + 8.0 * ep2 + 24.0 * t1sq * t1sq)
-                * d * d * d * d * d
-                / 120.0)
-            / phi1.cos();
-
-    (lon_rad.to_degrees(), lat_rad.to_degrees())
+/// 经纬度（度）→ EPSG:3857 米。仅在源是 EPSG:4326 时使用；其它投影走
+/// `transform_to_3857` 跨投影级联。
+fn lonlat_to_3857(lon_deg: f64, lat_deg: f64) -> (f64, f64) {
+    let lonlat = proj4rs::Proj::from_proj_string(WGS84_GEOGR_PROJ)
+        .expect("valid WGS84 PROJ.4");
+    let merc = proj4rs::Proj::from_proj_string(WEB_MERC_PROJ)
+        .expect("valid Web Mercator PROJ.4");
+    let mut p = (lon_deg.to_radians(), lat_deg.to_radians());
+    proj4rs::transform::transform(&lonlat, &merc, &mut p)
+        .expect("longlat -> 3857");
+    (p.0, p.1)
 }
 
 /// 从 EPSG 代码判断是否为 UTM 投影，返回 (zone, is_north)。
@@ -191,12 +160,41 @@ fn epsg_to_utm(epsg: u32) -> Option<(u32, bool)> {
     }
 }
 
+/// 从 EPSG 代码生成 PROJ.4 字符串。常见 CRS 直出；其它 EPSG 返回 None，
+/// 调用方回落为「按 EPSG:3857 假设直接用原始值」。
+fn proj_string_for_epsg(epsg: u32) -> Option<String> {
+    match epsg {
+        3857 => Some(WEB_MERC_PROJ.to_string()),
+        4326 => Some(WGS84_GEOGR_PROJ.to_string()),
+        epsg if epsg_to_utm(epsg).is_some() => {
+            let (zone, is_north) = epsg_to_utm(epsg).unwrap();
+            Some(utm_proj_string(zone, is_north))
+        }
+        _ => None,
+    }
+}
+
+/// 把任意已知 EPSG 的投影坐标转换为 EPSG:3857 米。
+/// EPSG:4326 输入单位为度（会转弧度），其它 EPSG 输入单位为米。
+/// 失败时返回 None（proj4rs 不支持该 PROJ.4 / datum 等）。
+fn transform_to_3857(epsg: u32, x: f64, y: f64) -> Option<(f64, f64)> {
+    let src_proj_str = proj_string_for_epsg(epsg)?;
+    let src = proj4rs::Proj::from_proj_string(&src_proj_str).ok()?;
+    let merc = proj4rs::Proj::from_proj_string(WEB_MERC_PROJ).ok()?;
+    // EPSG:4326 期望 (lon, lat) 弧度；其它投影（3857/UTM）单位米。
+    let mut p = if epsg == 4326 {
+        (x.to_radians(), y.to_radians())
+    } else {
+        (x, y)
+    };
+    proj4rs::transform::transform(&src, &merc, &mut p).ok()?;
+    Some((p.0, p.1))
+}
+
 /// 提取地理参考；无 PixelScale/Tiepoint 时返回 None。
 ///
-/// 坐标统一转为 EPSG:3857：
-/// - 已是 3857 → 直接使用
-/// - 4326 (lon/lat) → Mercator 正算
-/// - UTM 等投影 → 先反算到 lon/lat，再正算到 3857
+/// 坐标统一转为 EPSG:3857：委托 proj4rs 完成任意 CRS → 3857 的级联
+///（内部自动走 src → 地理 → dst，并正确处理 datum shift）。
 pub fn probe_georef(path: &Path) -> CoreResult<Option<GeoRef>> {
     let file = File::open(path).map_err(|e| io_err(path.display().to_string(), e))?;
     let mut dec = Decoder::new(file)?;
@@ -267,17 +265,12 @@ pub fn probe_georef(path: &Path) -> CoreResult<Option<GeoRef>> {
     }
 
     if let Some(epsg) = geocode_epsg {
-        // 其他投影 → 先反算到 lon/lat，再正算到 3857
-        if let Some((zone, is_north)) = epsg_to_utm(epsg) {
-            // UTM 反算：四个角点
-            // 注意：像素 (0,0) = 左上（北），像素 (0,h) = 左下（南）
-            // UTM Y 增大方向 = 北，所以南界 = raw_y - src_h * py
-            let (lon0, lat_top) = utm_to_lonlat(raw_x, raw_y, zone, is_north);
-            let (lon1, _) = utm_to_lonlat(raw_x + src_w as f64 * px, raw_y, zone, is_north);
-            let (_, lat_bot) = utm_to_lonlat(raw_x, raw_y - src_h as f64 * py, zone, is_north);
-            let (m0, my_n) = lonlat_to_3857(lon0, lat_top);
-            let (m1, _) = lonlat_to_3857(lon1, lat_top);
-            let (_, my_s) = lonlat_to_3857(lon0, lat_bot);
+        // 已知 EPSG（含 UTM）：经 proj4rs 转 3857
+        if let (Some((m0, my_n)), Some((m1, _)), Some((_, my_s))) = (
+            transform_to_3857(epsg, raw_x, raw_y),
+            transform_to_3857(epsg, raw_x + src_w as f64 * px, raw_y),
+            transform_to_3857(epsg, raw_x, raw_y - src_h as f64 * py),
+        ) {
             return Ok(Some(GeoRef {
                 mx0: m0,
                 my_top: my_n,
@@ -285,7 +278,7 @@ pub fn probe_georef(path: &Path) -> CoreResult<Option<GeoRef>> {
                 sy: (my_s - my_n) / src_h as f64, // 负值
             }));
         }
-        // 未知投影——回退为假设3857
+        // 该 EPSG 未支持（或 proj4rs 失败）—— 回退为假设3857
         return Ok(Some(GeoRef {
             mx0: raw_x,
             my_top: raw_y,
@@ -420,5 +413,81 @@ pub(crate) fn result_to_u8(res: &DecodingResult) -> Option<Vec<u8>> {
         ),
         // F16 / U64：罕见格式，明确不支持
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::mercator::{INIT_RESOLUTION, ORIGIN_SHIFT};
+
+    /// 把 (3857 x, 3857 y) 反算到 z 级别瓦片坐标
+    fn tile_xy(x3857: f64, y3857: f64, z: u32) -> (i64, i64) {
+        let res = INIT_RESOLUTION / 2f64.powi(z as i32);
+        let tx = ((x3857 + ORIGIN_SHIFT) / res / 256.0).floor() as i64;
+        let ty = ((ORIGIN_SHIFT - y3857) / res / 256.0).floor() as i64;
+        (tx, ty)
+    }
+
+    /// tile_0.TIF (EPSG:32648 UTM zone 48N) 左上角 UTM (285635.05, 2785872.17)
+    /// 应转成 3857 米 (≈11451768.8, 2897092.2)，与 pyproj 精确匹配；
+    /// 在 z=18 起始瓦片 (205981, 112121)。
+    #[test]
+    fn utm_tile_0_origin_matches_pyproj() {
+        let (mx, my) = transform_to_3857(
+            32648,
+            285_635.050_237_536_43,
+            2_785_872.173_051_495_6,
+        )
+        .expect("UTM zone 48N must be supported");
+        assert!((mx - 11_451_768.81).abs() < 0.1, "mx={mx}");
+        assert!((my - 2_897_092.24).abs() < 0.1, "my={my}");
+
+        let (tx, ty) = tile_xy(mx, my, 18);
+        assert_eq!(tx, 205_981, "tx={tx}");
+        assert_eq!(ty, 112_121, "ty={ty}");
+    }
+
+    /// UTM 南半球 (EPSG:32755, zone 55S) 必须返回南半球 3857 y（小于 0 处）。
+    /// 历史 bug 是手写 UTM→lonlat 公式没处理 false northing 偏移导致。
+    #[test]
+    fn utm_southern_hemisphere_y_below_equator() {
+        // (700000, 5800000) 在 zone 55S 内，真实 lat≈-37.9°
+        let (mx, my) = transform_to_3857(32755, 700_000.0, 5_800_000.0)
+            .expect("UTM zone 55S must be supported");
+        // 南半球 3857 y < 赤道 y (≈0)
+        assert!(my < 0.0, "南半球 my={my} 应 < 0");
+        assert!(mx.abs() < 20_037_508.0, "x 应在 ±半周内");
+    }
+
+    /// EPSG:4326 经纬度 → 3857 走 proj4rs 端到端，应与 pyproj 结果一致。
+    #[test]
+    fn wgs84_to_3857_via_proj4rs() {
+        // (lon=0, lat=0) 在 EPSG:3857 下是 (0, 0)
+        let (mx, my) = transform_to_3857(4326, 0.0, 0.0).expect("EPSG:4326 ok");
+        assert!(mx.abs() < 1e-6 && my.abs() < 1e-6, "(0,0)→({mx},{my})");
+        // (lon=102.873, lat=25.174) 在 pyproj 下得到 (11451769.98, 2897131.78)
+        let (mx2, my2) = transform_to_3857(4326, 102.873, 25.174)
+            .expect("EPSG:4326 ok");
+        assert!((mx2 - 11_451_769.98).abs() < 0.1, "mx2={mx2}");
+        assert!((my2 - 2_897_131.78).abs() < 0.1, "my2={my2}");
+    }
+
+    /// UTM zone → PROJ.4 字符串正确性（含南半球 +south 旗标）
+    #[test]
+    fn utm_proj_string_format() {
+        assert!(utm_proj_string(48, true).contains("+zone=48 "));
+        assert!(!utm_proj_string(48, true).contains("+south"));
+        assert!(utm_proj_string(55, false).contains("+zone=55 "));
+        assert!(utm_proj_string(55, false).contains("+south"));
+    }
+
+    /// EPSG 代码解析：32648 → zone 48 north；32755 → zone 55 south。
+    #[test]
+    fn epsg_to_utm_zones() {
+        assert_eq!(epsg_to_utm(32648), Some((48, true)));
+        assert_eq!(epsg_to_utm(32755), Some((55, false)));
+        assert_eq!(epsg_to_utm(3857), None);
+        assert_eq!(epsg_to_utm(4326), None);
     }
 }

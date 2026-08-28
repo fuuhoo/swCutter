@@ -27,6 +27,8 @@ jobs:
   build-windows:
     name: Build & Release (Windows x64)
     runs-on: windows-latest
+    # Flutter Windows Release 首次编译可能 30+ 分钟；总预留 90 分钟上限。
+    timeout-minutes: 90
 
     steps:
       # ---- [1] 准备 ----
@@ -35,6 +37,9 @@ jobs:
         with:
           # 完整历史（生成 release notes 时可能用到）
           fetch-depth: 0
+          # 关键：必须拉 tag，否则 ${{ github.ref_name }} 拿不到 tag，且后续
+          # softprops/action-gh-release 自动推断 tag 也会失败。
+          fetch-tags: true
 
       - name: Resolve version from tag
         id: version
@@ -131,6 +136,7 @@ jobs:
 
       # ---- [7] 打包 ----
       - name: Prepare release archive
+        id: pack
         shell: pwsh
         env:
           REPO_FULL_NAME: ${{ github.repository }}
@@ -161,23 +167,25 @@ swCutter v$version (Windows x64)
             [System.IO.Compression.ZipFile]::CreateFromDirectory($src, $zipPath)
             Write-Host "Archive: $zipPath"
             Get-Item $zipPath | Select-Object FullName, Length
-            # 暴露给后续 step
-            "ZIP_PATH=$zipPath" >> $env:GITHUB_ENV
-            "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
+            # 暴露给后续 step：step output 在 ${{ steps.pack.outputs.X }} 中可访问
+            #（注意：不能直接读 ${{ env.X }}，那是 job env，仅在 step 内可见）
+            "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+            "zip_name=$zipName" >> $env:GITHUB_OUTPUT
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: sw_cutter-windows-x64
-          path: ${{ env.ZIP_PATH }}
+          path: ${{ steps.pack.outputs.zip_path }}
           if-no-files-found: error
 
       # ---- [8] 发布到 GitHub Release ----
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}        # 显式指定 tag；防止 release 推断失败
           name: swCutter v${{ steps.version.outputs.version }}
           generate_release_notes: true
-          files: ${{ env.ZIP_PATH }}
+          files: ${{ steps.pack.outputs.zip_path }} # 改读 step output；job env 在 with 里 中不可访问
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}

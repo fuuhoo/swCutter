@@ -66,3 +66,6 @@ chromedp_*.log
 /rust/test_*.js
 /rust/test_*.html
 /rust/test_ml*.js
+
+# 临时调研文件（webfetch / curl 拉下来的本地文档副本等）
+/.tmp/
