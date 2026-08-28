@@ -46,3 +46,23 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# spec-workflow 工具状态
+.spec-workflow/
+
+# 浏览器调试残留（Chrome / Edge remote-debugging user-data-dir + 进程输出）
+chrome_data/
+chrome_err.txt
+chrome_out.txt
+*_chrome_user_data/
+chromedp_*.log
+
+# Node / npm 临时残留（勿提交 Rust 项目里 npm init -y 产生的 package.json 等）
+**/package.json
+**/package-lock.json
+**/node_modules/
+
+# 本地调试脚本（rust/test_*.js、test_*.html 等临时分析文件）
+/rust/test_*.js
+/rust/test_*.html
+/rust/test_ml*.js

@@ -184,15 +184,21 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
     }
     final failures = <String>[];
     // 预览底图配置：仅注入「设置中已启用」的条目（全部关闭 → 空数组，页面零在线依赖）
-    final overlaysJson = jsonEncode(
-        app.baseMaps
-            .where((m) => m['on'] == true)
-            .map((m) {
-              final e = Map<String, dynamic>.from(m);
-              if ((e['tpl'] as String).contains('{tk}')) e['tk'] = app.tiandituTk;
-              return e;
-            })
-            .toList());
+    final overlaysJson = jsonEncode(app.baseMaps
+        .where((m) => m['on'] == true)
+        .map((m) {
+          final e = Map<String, dynamic>.from(m);
+          // 注入该模板所需的所有密钥占位符（如 {tk} → mapKeys['tk']）
+          for (final mm
+              in RegExp(r'\{([a-zA-Z0-9]+)\}').allMatches(e['tpl'] as String)) {
+            final name = mm.group(1)!;
+            if (!{'z', 'x', 'y', 's'}.contains(name)) {
+              e[name] = app.mapKeys[name] ?? '';
+            }
+          }
+          return e;
+        })
+        .toList());
     for (final d in List<TaskDraft>.from(store.drafts)) {
       try {
         // 全局设置同步（瓦片尺寸/跳过透明/重采样在「设置」页维护）
@@ -392,7 +398,7 @@ class _FormColumn extends ConsumerWidget {
             items: const [
               DropdownMenuItem(value: _AlphaChoice.keep, child: Text('保留源透明通道')),
               DropdownMenuItem(value: _AlphaChoice.threshold, child: Text('Alpha 阈值 → 全透明')),
-              DropdownMenuItem(value: _AlphaChoice.colorKey, child: Text('颜色键 → 透明（白底常用）')),
+              DropdownMenuItem(value: _AlphaChoice.colorKey, child: Text('颜色键 → 透明')),
             ],
             onChanged: locked
                 ? null
@@ -469,9 +475,37 @@ class _FormColumn extends ConsumerWidget {
                       }),
                     ],
                   ),
-                  Text('输入 RGB 与容差设置透明键（点选拾色暂不可用）',
+                  Text(
+                      '可直接输入 RGB 与容差；也可从预览图像直接取色（下方按钮）',
                       style:
                           TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                  const SizedBox(height: 8),
+                  // 拾色按钮：仅颜色键模式下显示；位于左侧表单，不覆盖右侧预览图
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonalIcon(
+                      onPressed: locked
+                          ? null
+                          : () {
+                              active!.pickColorMode = !active!.pickColorMode;
+                              store.touch();
+                            },
+                      icon: const Icon(Icons.colorize_rounded, size: 18),
+                      label: Text(
+                        active!.pickColorMode
+                            ? '拾色中：点击右侧预览图选色（再点退出）'
+                            : '从预览图像取色',
+                        style: const TextStyle(fontSize: 12.5),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    active!.pickColorMode
+                        ? '拾色模式已开启：点击右侧预览图上的目标颜色，将自动设为透明键'
+                        : '点击后进入拾色模式，再点击右侧预览图上的颜色即可设为透明键',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                  ),
                 ],
             },
         ]),
@@ -556,6 +590,20 @@ class _PreviewPane extends ConsumerStatefulWidget {
 class _PreviewPaneState extends ConsumerState<_PreviewPane> {
   Size? _previewSize;          // 预览 PNG 实际像素尺寸
   Uint8List? _decodedFor;      // 已解码的预览字节（同一 TaskDraft 内可变，需身份比较）
+  Offset? _pickMark;           // 取色标记（预览像素坐标）
+  Color? _pickColor;
+  Timer? _markTimer;
+  Timer? _refreshDebounce;     // 透明模式变化 → 防抖刷新预览
+  AlphaMode? _lastAlpha;       // 上一次看到的透明模式（草稿原地修改，需自行记录）
+
+  void _schedulePreviewRefresh(TaskDraft d) {
+    _refreshDebounce?.cancel();
+    _refreshDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted && identical(widget.draft, d)) {
+        ref.read(draftProvider).refreshPreview(d);
+      }
+    });
+  }
 
   /// 从 PNG 字节直接解析 IHDR 尺寸（字节 16..24，大端宽高），
   /// 避免用与实际分辨率不符的占位公式导致布局错乱/拉伸花屏。
@@ -586,7 +634,15 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
   @override
   void initState() {
     super.initState();
+    _lastAlpha = widget.draft?.alpha;
     WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleDecode());
+  }
+
+  @override
+  void dispose() {
+    _markTimer?.cancel();
+    _refreshDebounce?.cancel();
+    super.dispose();
   }
 
   @override
@@ -594,9 +650,89 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
     super.didUpdateWidget(old);
     if (!identical(old.draft?.previewBytes, widget.draft?.previewBytes)) {
       _previewSize = null;
+      _pickMark = null;
+    }
+    // 透明模式变化 → 防抖刷新预览，立即看到新透明效果。
+    // 注意：草稿对象原地修改，old/widget 的 draft 是同一对象，必须用本 State
+    // 记录的上一次 alpha 比较，否则新旧值恒相等、刷新永不触发。
+    final alpha = widget.draft?.alpha;
+    if (alpha != _lastAlpha) {
+      final hadPrev = _lastAlpha != null;
+      _lastAlpha = alpha;
+      final d = widget.draft;
+      if (hadPrev && alpha != null && d != null) {
+        _schedulePreviewRefresh(d);
+      }
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleDecode());
   }
+
+  /// 点击取色：仅颜色键模式 + 拾色模式下有效；
+  /// 映射预览像素坐标 → 源坐标 → Rust 精确采样 → 写入颜色键。
+  Future<void> _onPick(Offset localPx) async {
+    final size = _previewSize;
+    final draft = widget.draft;
+    if (draft == null || draft.alpha is! AlphaMode_ColorKey) return;
+    if (size == null || size.width < 1 || size.height < 1) return;
+    final sx = (localPx.dx / size.width * draft.width)
+        .floor()
+        .clamp(0, draft.width - 1);
+    final sy = (localPx.dy / size.height * draft.height)
+        .floor()
+        .clamp(0, draft.height - 1);
+    try {
+      final px = await rust.samplePixel(source: draft.source, x: sx, y: sy);
+      final r = px[0], g = px[1], b = px[2];
+      final a = draft.alpha as AlphaMode_ColorKey;
+      final keepTol = a.tolerance;
+
+      final prevKey = Color.fromARGB(255, a.r, a.g, a.b);
+      final newKey = Color.fromARGB(255, r, g, b);
+
+      draft.alpha = AlphaMode.colorKey(r: r, g: g, b: b, tolerance: keepTol);
+      ref.read(draftProvider).touch();
+
+      // 视觉反馈：图像内取色标记，900ms 淡出
+      setState(() {
+        _pickMark = localPx;
+        _pickColor = newKey;
+      });
+      _markTimer?.cancel();
+      _markTimer = Timer(const Duration(milliseconds: 900), () {
+        if (mounted) setState(() => _pickMark = null);
+      });
+
+      // 打扰最小化：仅颜色实际变化时提示
+      if (!mounted) return;
+      if (prevKey != newKey) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Row(children: [
+            Container(
+                width: 13,
+                height: 13,
+                decoration: BoxDecoration(
+                    color: newKey,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white24))),
+            const SizedBox(width: 8),
+            Text('透明键更新为 #${_hex(r, g, b)}'),
+          ]),
+          duration: const Duration(milliseconds: 1400),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('取色失败: $e')));
+      }
+    }
+  }
+
+  static String _hex(int r, int g, int b) => [r, g, b]
+      .map((v) => v.toRadixString(16).padLeft(2, '0'))
+      .join()
+      .toUpperCase();
 
   @override
   Widget build(BuildContext context) {
@@ -632,19 +768,95 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
+                  // 棋盘格底（透明度指示）：白色/浅色图像边缘、透明区域都能与预览底色区分
                   if (draft.previewBytes != null)
-                    InteractiveViewer(
-                      maxScale: 12,
-                      child: FittedBox(
-                        fit: BoxFit.contain,
-                        child: SizedBox(
-                          width: (_previewSize ?? _expectedSize(draft)).width,
-                          height: (_previewSize ?? _expectedSize(draft)).height,
-                          child: Image.memory(draft.previewBytes!,
-                              fit: BoxFit.fill, gaplessPlayback: true),
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: _CheckerboardPainter(
+                            dark: Theme.of(context).brightness ==
+                                Brightness.dark),
+                      ),
+                    ),
+                  if (draft.previewBytes != null)
+                    MouseRegion(
+                      cursor: draft.pickColorMode &&
+                              draft.alpha is AlphaMode_ColorKey
+                          ? SystemMouseCursors.precise
+                          : MouseCursor.defer,
+                      child: InteractiveViewer(
+                        maxScale: 12,
+                        child: FittedBox(
+                          fit: BoxFit.contain,
+                          // 细边框勾勒图像范围（白边图上也能看清边界）
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                  color: cs.outlineVariant
+                                      .withValues(alpha: 0.9),
+                                  width: 1),
+                            ),
+                            child: SizedBox(
+                              width:
+                                  (_previewSize ?? _expectedSize(draft)).width,
+                              height:
+                                  (_previewSize ?? _expectedSize(draft)).height,
+                            child: Stack(
+                              children: [
+                                GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTapUp:
+                                      draft.pickColorMode &&
+                                              draft.alpha is AlphaMode_ColorKey
+                                          ? (d) => _onPick(d.localPosition)
+                                          : null,
+                                  child: Image.memory(draft.previewBytes!,
+                                      fit: BoxFit.fill, gaplessPlayback: true),
+                                ),
+                                // 取色标记：点击位置短暂高亮
+                                if (_pickMark != null && _pickColor != null)
+                                  Positioned(
+                                    left: _pickMark!.dx - 11,
+                                    top: _pickMark!.dy - 11,
+                                    child: IgnorePointer(
+                                      child: TweenAnimationBuilder<double>(
+                                        tween: Tween(begin: 0.4, end: 1),
+                                        duration:
+                                            const Duration(milliseconds: 120),
+                                        builder: (context, v, _) => Container(
+                                          width: 22,
+                                          height: 22,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                                color: Colors.white
+                                                    .withValues(alpha: v),
+                                                width: 2),
+                                            color: Colors.black26,
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Container(
+                                            width: 10,
+                                            height: 10,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: _pickColor!
+                                                  .withValues(alpha: v),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ),
+                  ),
+                  // 仅在无图时显示状态：加载中转圈、失败提示、其余“暂无预览”。
+                  // 成功出图后不再叠加占位文字——此前无条件显示“预览生成失败”会盖住正常预览。
+                  if (draft.previewBytes == null)
                     Center(
                       child: draft.loadingPreview
                           ? const CircularProgressIndicator()
@@ -654,8 +866,25 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
                                 Icon(Icons.hide_image_rounded,
                                     size: 52, color: cs.outline),
                                 const SizedBox(height: 8),
-                                Text('预览生成失败',
-                                    style: TextStyle(color: cs.outline)),
+                                Text(
+                                  draft.previewError.isNotEmpty
+                                      ? '预览生成失败'
+                                      : '暂无预览',
+                                  style: TextStyle(color: cs.outline),
+                                ),
+                                if (draft.previewError.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 24, vertical: 6),
+                                    child: Text(
+                                      draft.previewError,
+                                      textAlign: TextAlign.center,
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          fontSize: 11, color: cs.outline),
+                                    ),
+                                  ),
                               ],
                             ),
                     ),
@@ -687,21 +916,40 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
               ),
             ),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.only(left: 14, right: 8, top: 6, bottom: 6),
               decoration: BoxDecoration(
                 color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
               ),
-              child: Wrap(
-                spacing: 14,
-                runSpacing: 4,
+              child: Row(
                 children: [
-                  _info(context, Icons.aspect_ratio_rounded,
-                      '${draft.width} × ${draft.height} px'),
-                  _info(context, Icons.hd_rounded,
-                      '${fmtBytes(draft.width * draft.height * 4)} RGBA'),
-                  if (totalTiles > 0)
-                    _info(context, Icons.grid_on_rounded,
-                        '预计 $totalTiles 块瓦片 · ${draft.estimates!.length} 个级别'),
+                  Expanded(
+                    child: Wrap(
+                      spacing: 14,
+                      runSpacing: 4,
+                      children: [
+                        _info(context, Icons.aspect_ratio_rounded,
+                            '${draft.width} × ${draft.height} px'),
+                        _info(context, Icons.hd_rounded,
+                            '${fmtBytes(draft.width * draft.height * 4)} RGBA'),
+                        if (totalTiles > 0)
+                          _info(context, Icons.grid_on_rounded,
+                              '预计 $totalTiles 块瓦片 · ${draft.estimates!.length} 个级别'),
+                      ],
+                    ),
+                  ),
+                  // 手动重新生成预览（拾取/改键后立即按当前透明模式重绘；位于图像下方不遮挡）
+                  TextButton.icon(
+                    onPressed: draft.previewBytes == null
+                        ? null
+                        : () => ref.read(draftProvider).refreshPreview(draft),
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('重新生成预览',
+                        style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -719,4 +967,29 @@ class _PreviewPaneState extends ConsumerState<_PreviewPane> {
       Text(text, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
     ]);
   }
+}
+
+/// 棋盘格底（透明度指示）：白色/浅色图像边缘与透明区域都能和预览底色区分。
+class _CheckerboardPainter extends CustomPainter {
+  final bool dark;
+  const _CheckerboardPainter({required this.dark});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const cell = 10.0;
+    final c1 = dark ? const Color(0xFF2B2B2B) : const Color(0xFFFFFFFF);
+    final c2 = dark ? const Color(0xFF3F3F3F) : const Color(0xFFC9C9C9);
+    canvas.drawRect(Offset.zero & size, Paint()..color = c1);
+    final p2 = Paint()..color = c2;
+    for (int y = 0; y * cell < size.height; y++) {
+      for (int x = 0; x * cell < size.width; x++) {
+        if ((x + y).isEven) continue;
+        canvas.drawRect(Rect.fromLTWH(x * cell, y * cell, cell, cell), p2);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CheckerboardPainter oldDelegate) =>
+      oldDelegate.dark != dark;
 }

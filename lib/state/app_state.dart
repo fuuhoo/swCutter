@@ -32,8 +32,8 @@ class AppState extends ChangeNotifier {
   bool skipEmpty = false;
   /// 全局重采样方式
   Resample resample = Resample.bilinear;
-  /// 天地图 tk 密钥（预览底图用）
-  String tiandituTk = '';
+  /// 地图服务密钥表（键名 = 模板占位符，如 {tk} → 'tk'；预览底图用）
+  Map<String, String> mapKeys = {'tk': ''};
   /// 预览底图/叠加层（写入每个 preview.html 的 CFG.overlays）
   List<Map<String, dynamic>> baseMaps = [
     {
@@ -57,7 +57,13 @@ class AppState extends ChangeNotifier {
         tileSize = (j['tileSize'] as num?)?.toInt() ?? 256;
         skipEmpty = (j['skipEmpty'] as bool?) ?? false;
         resample = (j['resample'] as int?) == 0 ? Resample.nearest : Resample.bilinear;
-        tiandituTk = (j['tiandituTk'] as String?) ?? '';
+        final mk = j['mapKeys'];
+        if (mk is Map) {
+          mapKeys = mk.map((k, v) => MapEntry(k.toString(), v.toString()));
+        } else {
+          // 迁移旧版 tiandituTk → mapKeys['tk']
+          mapKeys = {'tk': (j['tiandituTk'] as String?) ?? ''};
+        }
         final bm = j['baseMaps'];
         if (bm is List && bm.isNotEmpty) {
           baseMaps = bm.map((e) => Map<String, dynamic>.from(e as Map)).toList();
@@ -81,7 +87,7 @@ class AppState extends ChangeNotifier {
         'tileSize': tileSize,
         'skipEmpty': skipEmpty,
         'resample': resample == Resample.nearest ? 0 : 1,
-        'tiandituTk': tiandituTk,
+        'mapKeys': mapKeys,
         'baseMaps': baseMaps,
       }));
     } catch (_) {}
@@ -274,6 +280,58 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setTileSize(int v) {
+    tileSize = v;
+    saveSettings();
+    notifyListeners();
+  }
+
+  void setSkipEmpty(bool v) {
+    skipEmpty = v;
+    saveSettings();
+    notifyListeners();
+  }
+
+  void setResample(Resample v) {
+    resample = v;
+    saveSettings();
+    notifyListeners();
+  }
+
+  /// 设置某个地图服务密钥（键名 = 模板占位符，如 'tk'）：输入即保存并刷新。
+  void setMapKey(String name, String value) {
+    mapKeys[name] = value;
+    saveSettings();
+    notifyListeners();
+  }
+
+  void addBasemap(Map<String, dynamic> layer) {
+    baseMaps.add(layer);
+    saveSettings();
+    notifyListeners();
+  }
+
+  void removeBasemap(int i) {
+    if (i < 0 || i >= baseMaps.length) return;
+    baseMaps.removeAt(i);
+    saveSettings();
+    notifyListeners();
+  }
+
+  void setBasemapOn(int i, bool v) {
+    if (i < 0 || i >= baseMaps.length) return;
+    baseMaps[i]['on'] = v;
+    saveSettings();
+    notifyListeners();
+  }
+
+  void setBasemapBelow(int i, bool v) {
+    if (i < 0 || i >= baseMaps.length) return;
+    baseMaps[i]['below'] = v;
+    saveSettings();
+    notifyListeners();
+  }
+
   /// 外部完成状态修改后手动刷新。
   void notifySelf() => notifyListeners();
 
@@ -317,6 +375,8 @@ class TaskDraft {
   Uint8List? previewBytes;
   String previewError = '';
   bool loadingPreview = false;
+  /// 从预览图像取色模式（仅颜色键模式下可开启；表单按钮切换，预览图点击采样）
+  bool pickColorMode = false;
   List<api.LevelEstimate>? estimates;
   /// 估算返回的 native zoom（mercator=GSD 级别；relative=原始级别）
   int? nativeZoom;
@@ -378,6 +438,20 @@ class DraftStore extends ChangeNotifier {
 
   void touch() => notifyListeners();
 
+  /// 透明模式变化后刷新预览（仅精图；解码块进程级缓存，二次调用接近瞬时）。
+  /// 拾色/改键后即时看到新透明效果。
+  Future<void> refreshPreview(TaskDraft d) async {
+    try {
+      final fine =
+          await api.makePreview(source: d.source, maxPx: 1400, alpha: d.alpha);
+      if (!identical(d, active) && !drafts.contains(d)) return;
+      d.previewBytes = Uint8List.fromList(fine);
+      notifyListeners();
+    } catch (_) {
+      // 刷新失败保留旧预览，不打扰
+    }
+  }
+
   /// 渐进式预览：先出低清（秒开），后台再补高清替换。
   Future<void> loadPreview(TaskDraft d, {int maxPx = 1400}) async {
     d.loadingPreview = true;
@@ -386,7 +460,8 @@ class DraftStore extends ChangeNotifier {
     try {
       // 第一阶段：极低清快速出图（只触碰极少 chunk，10G+ 也 <2s）
       try {
-        final coarse = await api.makePreview(source: d.source, maxPx: 320);
+        final coarse =
+            await api.makePreview(source: d.source, maxPx: 320, alpha: d.alpha);
         // 防御性拷贝：脱离 FRB 缓冲，避免底层内存复用导致解码花屏
         final coarseCopy = Uint8List.fromList(coarse);
         // 用户可能已切换草稿或重入：仅当仍是当前字节时覆盖
@@ -396,7 +471,7 @@ class DraftStore extends ChangeNotifier {
         }
       } catch (_) {/* 粗图失败不阻断高清 */}
       // 第二阶段：高清精修
-      final fine = await api.makePreview(source: d.source, maxPx: maxPx);
+      final fine = await api.makePreview(source: d.source, maxPx: maxPx, alpha: d.alpha);
       d.previewBytes = Uint8List.fromList(fine);
     } catch (e) {
       if (d.previewBytes == null) d.previewError = e.toString();

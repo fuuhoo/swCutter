@@ -42,6 +42,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  AlphaMode dco_decode_box_autoadd_alpha_mode(dynamic raw);
+
+  @protected
   TaskConfig dco_decode_box_autoadd_task_config(dynamic raw);
 
   @protected
@@ -141,6 +144,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  AlphaMode sse_decode_box_autoadd_alpha_mode(SseDeserializer deserializer);
 
   @protected
   TaskConfig sse_decode_box_autoadd_task_config(SseDeserializer deserializer);
@@ -248,6 +254,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_alpha_mode(
+    AlphaMode self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_task_config(

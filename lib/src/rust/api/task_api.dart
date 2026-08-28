@@ -63,11 +63,17 @@ Future<Uint8List> samplePixel({
 }) =>
     RustLib.instance.api.crateApiTaskApiSamplePixel(source: source, x: x, y: y);
 
-Future<Uint8List> makePreview({required String source, required int maxPx}) =>
-    RustLib.instance.api.crateApiTaskApiMakePreview(
-      source: source,
-      maxPx: maxPx,
-    );
+/// 生成界面内预览缩略图（PNG 字节）。超大图按行带抽稀采样，内存有界。
+/// `alpha` 与切片一致地应用到预览图，使预览所见即所得（如 ColorKey 黑边→透明）。
+Future<Uint8List> makePreview({
+  required String source,
+  required int maxPx,
+  required AlphaMode alpha,
+}) => RustLib.instance.api.crateApiTaskApiMakePreview(
+  source: source,
+  maxPx: maxPx,
+  alpha: alpha,
+);
 
 Stream<TaskEvent> subscribeEvents() =>
     RustLib.instance.api.crateApiTaskApiSubscribeEvents();

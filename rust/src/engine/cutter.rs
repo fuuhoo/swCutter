@@ -342,7 +342,7 @@ pub fn run_cut_with_control(
     // mercator 模式的最高级（基础级）：该级直接采样源；更低级由子瓦片合成
     let base_z = mplan.as_ref().and_then(|mp| mp.levels.last().map(|l| l.z));
 
-    jobs.par_iter().for_each(|job| {
+    let process_job = |job: &Job| {
         // 暂停停靠（取消可打断）
         while control.paused.load(Ordering::Relaxed) && !control.cancel.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(120));
@@ -428,13 +428,40 @@ pub fn run_cut_with_control(
                 control.cancel.store(true, Ordering::Relaxed);
             }
         }
-    });
+    };
+
+    match (&pyramid, &mplan) {
+        // Mercator：逐级屏障——基础级（直接采样源）先整体落盘，
+        // 概览级才读取其 4 块子瓦片合成，避免并行下读到尚未写入的子块（显示空洞）。
+        // 级别顺序不变：最高级（基础级）最先，低级别概览随后。
+        (_, Some(mp)) => {
+            let mut idx = 0usize;
+            for lv in mp.levels.iter().rev() {
+                let n = lv.count() as usize;
+                let slice = &jobs[idx..idx + n];
+                idx += n;
+                slice.par_iter().for_each(|job| process_job(job));
+                if control.cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+            }
+        }
+        _ => jobs.par_iter().for_each(|job| process_job(job)),
+    }
 
     workers_done.store(true, Ordering::Relaxed);
     let _ = ticker.join();
 
-    // 清理线程本地缓存（可选，释放内存）
-    // THREAD_READER.with(...) 不跨线程强制清理；线程池复用时路径校验会自动重建。
+    // 释放各工作线程持有的源读取器（thread_local 不随任务结束回收）：
+    // 每个读取器缓存最高 ~160MB 解码块，rayon 池线程常驻 → 连续切多任务后
+    // 内存滞留可达数 GB，拖垮后续预览/切片。此处在池线程上各自清空。
+    (0..rayon::current_num_threads().saturating_mul(2))
+        .into_par_iter()
+        .for_each(|_| {
+            THREAD_READER.with(|cell| {
+                *cell.borrow_mut() = None;
+            });
+        });
 
     // ---- 收尾 ----
     let errs = errors.lock().unwrap().clone();
@@ -584,16 +611,45 @@ fn render_tile_overview(params: &CutParams, z: u32, tx: u32, ty: u32) -> CoreRes
             }
         }
     }
-    // gdal2tiles 概览恒用 ANTIALIAS(Lanczos3)（--resampling 仅影响基础级）
-    let out = image::imageops::resize(
-        &canvas,
-        t,
-        t,
-        image::imageops::FilterType::Lanczos3,
-    );
-    let mut rgba = out.into_raw();
+    // 概览降采样：预乘 2×2 盒式平均（512→256 恰为 2×）。
+    // 透明像素在预乘空间中贡献 0，不会把背景色混入内容 RGB（颜色键不会误判），
+    // alpha 按覆盖率平均（内容不因稀疏而衰减/消失，边缘平滑过渡）。
+    let rgba = premul_box_downsample(&canvas, t, t);
     let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
     write_tile_png(params, rgba, t, t, rel)
+}
+
+/// 预乘 alpha 感知的 2×2 盒式平均降采样（输入 2w×2h → 输出 w×h）。
+/// 输出为直通 RGBA：RGB = 预乘和 / alpha 和（a=0 的像素不参与颜色），alpha = 覆盖率均值。
+/// 用于概览级合成：与 `halve2x_raw` 同一套数学，保证概览链与 mip 链口径一致。
+fn premul_box_downsample(src: &image::RgbaImage, w: u32, h: u32) -> Vec<u8> {
+    let mut out = vec![0u8; w as usize * h as usize * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let mut sr = 0u32;
+            let mut sg = 0u32;
+            let mut sb = 0u32;
+            let mut sa = 0u32;
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let p = src.get_pixel(x * 2 + dx, y * 2 + dy);
+                    let a = p[3] as u32;
+                    sr += p[0] as u32 * a;
+                    sg += p[1] as u32 * a;
+                    sb += p[2] as u32 * a;
+                    sa += a;
+                }
+            }
+            let i = ((y * w + x) * 4) as usize;
+            if sa > 0 {
+                out[i] = (sr / sa) as u8;
+                out[i + 1] = (sg / sa) as u8;
+                out[i + 2] = (sb / sa) as u8;
+            }
+            out[i + 3] = (sa / 4) as u8;
+        }
+    }
+    out
 }
 
 // ---------------- 线程本地读取器 ----------------
@@ -663,7 +719,7 @@ fn render_tile_mercator(
     } else {
         reader.read_rect(ix0, iy0, iw, ih)?
     };
-    let mut img = image::RgbaImage::from_raw(iw.max(1), ih.max(1), crop)
+    let img = image::RgbaImage::from_raw(iw.max(1), ih.max(1), crop)
         .ok_or_else(|| CoreError::Encoding("mercator 矩形缓冲不匹配".into()))?;
 
         // 最终缩放对齐 gdal2tiles：非最近邻恒 ANTIALIAS(Lanczos3)
@@ -676,7 +732,7 @@ fn render_tile_mercator(
     } else if needs_smart(img.width(), img.height(), params.tile_size, params.tile_size) {
         smart_downscale(img, params.tile_size, params.tile_size, flt)
     } else {
-        image::imageops::resize(&img, params.tile_size, params.tile_size, flt)
+        alpha_aware_resize(&img, params.tile_size, params.tile_size, flt)
     };
     let rgba = out_img.into_raw();
     let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
@@ -802,15 +858,64 @@ fn write_tile_png(
     Ok(png.len() as u64)
 }
 
-fn resample_filter(resample: Resample) -> ImgFilter {
-    match resample {
-        Resample::Nearest => ImgFilter::Nearest,
-        Resample::Bilinear => ImgFilter::Triangle,
+/// 需要智能降采样时返回 true（源区域远大于输出）
+fn needs_smart(w: u32, h: u32, tw: u32, th: u32) -> bool {
+    w >= tw.saturating_mul(4) && h >= th.saturating_mul(4)
+}
+
+// ---------------- 预乘 alpha 感知缩放（透明像素不污染 RGB） ----------------
+
+/// RGBA 直通 → 预乘（就地）。a=255 的像素跳过（预乘为其本身）。
+fn premultiply_inplace(rgba: &mut [u8]) {
+    for px in rgba.chunks_exact_mut(4) {
+        let a = px[3];
+        if a == 255 {
+            continue;
+        }
+        px[0] = (px[0] as u16 * a as u16 / 255) as u8;
+        px[1] = (px[1] as u16 * a as u16 / 255) as u8;
+        px[2] = (px[2] as u16 * a as u16 / 255) as u8;
     }
+}
+
+/// RGBA 预乘 → 直通（就地）。a=0 的像素 RGB 归零（颜色无意义）。
+fn unpremultiply_inplace(rgba: &mut [u8]) {
+    for px in rgba.chunks_exact_mut(4) {
+        let a = px[3];
+        if a == 0 {
+            px[0] = 0;
+            px[1] = 0;
+            px[2] = 0;
+        } else if a < 255 {
+            px[0] = ((px[0] as u16 * 255) / a as u16).min(255) as u8;
+            px[1] = ((px[1] as u16 * 255) / a as u16).min(255) as u8;
+            px[2] = ((px[2] as u16 * 255) / a as u16).min(255) as u8;
+        }
+    }
+}
+
+/// 预乘 alpha 感知缩放：直通 RGBA 先预乘再重采样再反预乘。
+/// 透明像素在预乘空间中贡献 0 → 背景色不会渗入内容 RGB（消除暗边/色晕），
+/// 且 alpha 按面积正确均值（半透明边缘不向内容扩散）。
+fn alpha_aware_resize(
+    img: &image::RgbaImage,
+    tw: u32,
+    th: u32,
+    filter: ImgFilter,
+) -> image::RgbaImage {
+    if img.width() == tw && img.height() == th {
+        return img.clone();
+    }
+    let mut premul = img.clone();
+    premultiply_inplace(premul.as_mut());
+    let mut out = image::imageops::resize(&premul, tw, th, filter);
+    unpremultiply_inplace(out.as_mut());
+    out
 }
 
 /// 大比例降采样：先反复折半（每步 O(n)，窗口恒定 2px 支撑）到接近目标，
 /// 再用指定滤波器做最后一步。避免直接 300MP→65KP 时滤波窗口爆炸的长尾。
+/// 全程在预乘空间进行（透明像素不污染内容 RGB，alpha 不稀释）。
 fn smart_downscale(
     img: image::RgbaImage,
     tw: u32,
@@ -818,6 +923,7 @@ fn smart_downscale(
     filter: ImgFilter,
 ) -> image::RgbaImage {
     let mut cur = img;
+    premultiply_inplace(cur.as_mut());
     // 折半直到任一边小于目标 4 倍（保留一步精细滤波空间）
     while cur.width() >= tw.saturating_mul(4) && cur.height() >= th.saturating_mul(4) {
         let nw = (cur.width() / 2).max(tw);
@@ -830,15 +936,13 @@ fn smart_downscale(
         );
     }
     if cur.width() == tw && cur.height() == th {
+        unpremultiply_inplace(cur.as_mut());
         cur
     } else {
-        image::imageops::resize(&cur, tw, th, filter)
+        let mut out = image::imageops::resize(&cur, tw, th, filter);
+        unpremultiply_inplace(out.as_mut());
+        out
     }
-}
-
-/// 需要智能降采样时返回 true（源区域远大于输出）
-fn needs_smart(w: u32, h: u32, tw: u32, th: u32) -> bool {
-    w >= tw.saturating_mul(4) && h >= th.saturating_mul(4)
 }
 
 // ---------------- 共享全图 mip 金字塔（抗锯齿核心） ----------------
@@ -858,7 +962,7 @@ impl FullMips {
     }
 }
 
-/// 直通 alpha 的 2×2 盒式平均（边缘 clamp），输入输出均为 RGBA8 原始缓冲。
+/// 直通 alpha 的 2×2 盒式平均（边缘按实际像素数计数，输入输出均为 RGBA8 原始缓冲）。
 fn halve2x_raw(px: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
     let ow = w.div_ceil(2).max(1);
     let oh = h.div_ceil(2).max(1);
@@ -869,6 +973,7 @@ fn halve2x_raw(px: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
             let mut sg = 0u32;
             let mut sb = 0u32;
             let mut sa = 0u32;
+            let mut cnt = 0u32;
             for dy in 0..2 {
                 for dx in 0..2 {
                     let x = ox * 2 + dx;
@@ -880,6 +985,7 @@ fn halve2x_raw(px: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
                         sg += px[i + 1] as u32 * a;
                         sb += px[i + 2] as u32 * a;
                         sa += a;
+                        cnt += 1;
                     }
                 }
             }
@@ -889,7 +995,8 @@ fn halve2x_raw(px: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
                 out[di + 1] = (sg / sa) as u8;
                 out[di + 2] = (sb / sa) as u8;
             }
-            out[di + 3] = (sa / 4) as u8;
+            // 边缘块按实际参与像素数平均，避免影像边界被除以 4 而变淡（不该透明的边界透明了）
+            out[di + 3] = (sa / cnt.max(1)) as u8;
         }
     }
     (out, ow, oh)
@@ -974,6 +1081,7 @@ fn render_tile(
         image::imageops::crop_imm(&full, cx, cy, sw as u32, sh as u32).to_image();
 
     // 重采样到目标尺寸（含放大级别）；最终缩放对齐 gdal2tiles：非最近邻恒 ANTIALIAS(Lanczos3)
+    // 预乘 alpha 感知：透明像素不把背景色渗入内容 RGB（颜色键不误判），alpha 按面积正确均值
     let out_img = if (sf - 1.0).abs() < f64::EPSILON && cropped.width() == out_w && cropped.height() == out_h {
         cropped
     } else {
@@ -981,10 +1089,10 @@ fn render_tile(
             Resample::Nearest => ImgFilter::Nearest,
             _ => ImgFilter::Lanczos3,
         };
-        image::imageops::resize(&cropped, out_w, out_h, filter)
+        alpha_aware_resize(&cropped, out_w, out_h, filter)
     };
 
-    let mut rgba = out_img.into_raw();
+    let rgba = out_img.into_raw();
     let rel = writer::tile_rel_path(params.scheme, lp.level, tx, ty, lp.tiles_y);
     write_tile_png(params, rgba, out_w, out_h, rel)
 }
@@ -1062,9 +1170,9 @@ fn render_tile_from_full(
     } else if needs_smart(cropped.width(), cropped.height(), out_w, out_h) {
         smart_downscale(cropped, out_w, out_h, flt)
     } else {
-        image::imageops::resize(&cropped, out_w, out_h, flt)
+        alpha_aware_resize(&cropped, out_w, out_h, flt)
     };
-    let mut rgba = out_img.into_raw();
+    let rgba = out_img.into_raw();
     let rel = writer::tile_rel_path(params.scheme, lp.level, tx, ty, lp.tiles_y);
     write_tile_png(params, rgba, out_w, out_h, rel)
 }
@@ -1116,9 +1224,9 @@ fn render_tile_mercator_from_full(
     } else if needs_smart(cropped.width(), cropped.height(), tt, tt) {
         smart_downscale(cropped, tt, tt, flt)
     } else {
-        image::imageops::resize(&cropped, tt, tt, flt)
+        alpha_aware_resize(&cropped, tt, tt, flt)
     };
-    let mut rgba = out_img.into_raw();
+    let rgba = out_img.into_raw();
     let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
     write_tile_png(params, rgba, tt, tt, rel)
 }
@@ -1354,6 +1462,139 @@ mod tests {
         .modified()
         .unwrap();
         assert_ne!(mtime_before, mtime_tms, "参数变化应全量重切");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn write_png_test(path: &Path, img: &image::RgbaImage) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let mut png: Vec<u8> = Vec::new();
+        let encoder = PngEncoder::new_with_quality(
+            Cursor::new(&mut png),
+            CompressionType::Fast,
+            FilterType::Sub,
+        );
+        encoder
+            .write_image(
+                img.as_raw(),
+                img.width(),
+                img.height(),
+                ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        std::fs::write(path, &png).unwrap();
+    }
+
+    #[test]
+    fn premul_box_downsample_math() {
+        // 全不透明红块 → 完全保留
+        let src = image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]));
+        let out = premul_box_downsample(&src, 2, 2);
+        for i in 0..4 {
+            let px = &out[i * 4..i * 4 + 4];
+            assert_eq!(px, &[255, 0, 0, 255], "全不透明内容不应被稀释");
+        }
+        // 仅 1/4 覆盖：alpha=63，RGB 保持纯色（透明像素不污染颜色）
+        let mut sparse = image::RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 0, 0]));
+        sparse.put_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
+        let out = premul_box_downsample(&sparse, 2, 2);
+        assert_eq!(&out[0..4], &[255, 0, 0, 63], "1/4 覆盖 → alpha 63 且 RGB 纯红");
+        assert_eq!(&out[4..8], &[0, 0, 0, 0]);
+        assert_eq!(&out[8..12], &[0, 0, 0, 0]);
+        assert_eq!(&out[12..16], &[0, 0, 0, 0]);
+        // 全透明 → 全透明
+        let empty = image::RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 0, 0]));
+        let out = premul_box_downsample(&empty, 2, 2);
+        assert!(out.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn halve2x_raw_keeps_boundary_alpha() {
+        // 单像素图：旧实现除以 4 → alpha 63（边界变淡）；应保持 255
+        let (out, ow, oh) = halve2x_raw(&[255, 255, 255, 255], 1, 1);
+        assert_eq!((ow, oh), (1, 1));
+        assert_eq!(&out, &[255, 255, 255, 255], "1px 图边界不应除以 4");
+        // 3×3 全不透明 → 2×2，边缘块按实际像素数平均，alpha 全 255
+        let mut px = vec![0u8; 3 * 3 * 4];
+        for p in px.chunks_exact_mut(4) {
+            p.copy_from_slice(&[200, 100, 50, 255]);
+        }
+        let (out, ow, oh) = halve2x_raw(&px, 3, 3);
+        assert_eq!((ow, oh), (2, 2));
+        for i in 0..4 {
+            assert_eq!(out[i * 4 + 3], 255, "边缘块 alpha 应保持 255");
+        }
+    }
+
+    #[test]
+    fn alpha_aware_resize_keeps_color_pure() {
+        // 2×2：1 个不透明红 + 3 个透明黑 → 缩到 1×1
+        // 直通平均会得到 (63,0,0,63)（颜色被透明黑污染）；预乘平均应得纯红 (255,0,0,63)
+        let mut img = image::RgbaImage::from_pixel(2, 2, image::Rgba([0, 0, 0, 0]));
+        img.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        let out = alpha_aware_resize(&img, 1, 1, ImgFilter::Triangle);
+        let p = out.get_pixel(0, 0);
+        assert!(p[0] > 200, "内容颜色不应被透明像素稀释: {p:?}");
+        assert!(p[1] < 60 && p[2] < 60, "不应出现暗边/色晕: {p:?}");
+        assert!(p[3] > 0, "alpha 按覆盖率保留");
+    }
+
+    /// 回归：mercator 概览链（z=2 → z=1 → z=0）不得丢失/衰减内容。
+    /// 旧实现：alpha 用 Nearest 相位采样 → 奇数相位的内容整条消失；
+    /// RGB 用直通平均 → 颜色被键出背景稀释，逐级 ColorKey 再误杀。
+    #[test]
+    fn overview_chain_preserves_content() {
+        let dir = tmp_dir("overview");
+        let out = dir.join("out");
+        let t = 256u32;
+
+        // 基础级 z=2 瓦片 (0,0)：白底（键出为透明）+ 红色内容块 + 细线（奇数 x 相位）
+        let mut tile = image::RgbaImage::from_pixel(t, t, image::Rgba([255, 255, 255, 255]));
+        for y in 64..192 {
+            for x in 64..192 {
+                tile.put_pixel(x, y, image::Rgba([255, 0, 0, 255]));
+            }
+        }
+        for y in 0..t {
+            tile.put_pixel(201, y, image::Rgba([255, 0, 0, 255]));
+        }
+        // 模拟基础级落盘前的 ColorKey 处理（write_tile_png 的 alpha.apply）
+        AlphaMode::ColorKey { r: 255, g: 255, b: 255, tolerance: 2 }.apply(tile.as_mut());
+        write_png_test(&out.join("2").join("0").join("0.png"), &tile);
+        // 其余 3 个子瓦片缺失 → 按全透明处理（等价于 skip_empty 的空瓦片）
+
+        let params = CutParams {
+            source: dir.join("unused.tif"),
+            output: out.clone(),
+            tile_size: 256,
+            zmin: Some(0),
+            zmax: Some(2),
+            scheme: Scheme::Xyz,
+            alpha: AlphaMode::ColorKey { r: 255, g: 255, b: 255, tolerance: 2 },
+            resample: Resample::Bilinear,
+            skip_empty: false,
+            mercator: true,
+            preview_overlays: None,
+        };
+        render_tile_overview(&params, 1, 0, 0).unwrap();
+        render_tile_overview(&params, 0, 0, 0).unwrap();
+
+        let t0 = load_png(&out.join("0").join("0").join("0.png"));
+        let px = |x: u32, y: u32| -> [u8; 4] {
+            let i = ((y * 256 + x) * 4) as usize;
+            [t0[i], t0[i + 1], t0[i + 2], t0[i + 3]]
+        };
+        // 内容块内部 (z2 64..192 → z0 16..48)：完全不透明、保持纯红（不被背景稀释）
+        let p = px(32, 32);
+        assert_eq!(p[3], 255, "内容内部 alpha 不应衰减或消失: {p:?}");
+        assert!(p[0] > 200 && p[1] < 60 && p[2] < 60, "内容 RGB 不应被键出背景稀释: {p:?}");
+        // 细线 (z2 x=201 → z0 x=50)：旧 Nearest 相位采样会整条消失，预乘盒式平均应保留（alpha>0）
+        let l = px(50, 32);
+        assert!(l[3] > 0, "细线不应整条透明（旧 alpha Nearest 相位采样会消失）: {l:?}");
+        // 背景：透明
+        assert_eq!(px(200, 200)[3], 0, "背景应保持透明");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

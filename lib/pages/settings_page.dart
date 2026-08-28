@@ -45,11 +45,16 @@ const List<Map<String, String>> kBasemapPresets = [
   },
 ];
 
-class SettingsPage extends ConsumerWidget {
+class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends ConsumerState<SettingsPage> {
+  @override
+  Widget build(BuildContext context) {
     final app = ref.watch(appProvider);
     final cs = Theme.of(context).colorScheme;
 
@@ -92,9 +97,8 @@ class SettingsPage extends ConsumerWidget {
                   max: 8,
                   divisions: 7,
                   label: '${app.concurrency}',
-                  onChanged: (v) => ref
-                      .read(appProvider)
-                      .setConcurrency(v.round()),
+                  onChanged: (v) =>
+                      ref.read(appProvider).setConcurrency(v.round()),
                 ),
                 Text('同时切片的任务数量。每个任务内部还会按 CPU 核数并行渲染瓦片。',
                     style: TextStyle(fontSize: 12, color: cs.outline)),
@@ -198,10 +202,8 @@ class SettingsPage extends ConsumerWidget {
                         ButtonSegment(value: 512, label: Text('512')),
                       ],
                       selected: {app.tileSize},
-                      onSelectionChanged: (s) {
-                        ref.read(appProvider).tileSize = s.first;
-                        ref.read(appProvider).saveSettings();
-                      },
+                      onSelectionChanged: (s) =>
+                          ref.read(appProvider).setTileSize(s.first),
                     ),
                   ],
                 ),
@@ -214,10 +216,8 @@ class SettingsPage extends ConsumerWidget {
                       '关闭时与 gdal2tiles 一致：空白区域也输出透明 PNG（默认关闭）',
                       style: TextStyle(fontSize: 11)),
                   value: app.skipEmpty,
-                  onChanged: (v) {
-                    ref.read(appProvider).skipEmpty = v;
-                    ref.read(appProvider).saveSettings();
-                  },
+                  onChanged: (v) =>
+                      ref.read(appProvider).setSkipEmpty(v),
                 ),
                 const SizedBox(height: 4),
                 Row(
@@ -230,10 +230,8 @@ class SettingsPage extends ConsumerWidget {
                         ButtonSegment(value: Resample.bilinear, label: Text('双线性')),
                       ],
                       selected: {app.resample},
-                      onSelectionChanged: (s) {
-                        ref.read(appProvider).resample = s.first;
-                        ref.read(appProvider).saveSettings();
-                      },
+                      onSelectionChanged: (s) =>
+                          ref.read(appProvider).setResample(s.first),
                     ),
                   ],
                 ),
@@ -257,45 +255,53 @@ class SettingsPage extends ConsumerWidget {
                 ]),
                 const SizedBox(height: 6),
                 Text('写入每个 preview.html 作为默认底图/叠加层。'
-                    '公开免密钥：OpenStreetMap（矢量，默认启用）、ArcGIS World Imagery（卫星）。'
-                    '谷歌无需密钥但请注意其服务条款；天地图需免费注册 tk 密钥。',
+                    '点击预设即添加（再次点击移除，已添加显示 ✓）。'
+                    '公开免密钥：OpenStreetMap（矢量，默认启用）、ArcGIS World Imagery（卫星）；'
+                    '谷歌无需密钥但请注意其服务条款；需要密钥的服务（如天地图）统一在下方「密钥设置」中维护。',
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
                 const SizedBox(height: 10),
                 Wrap(spacing: 8, runSpacing: 8, children: [
                   for (final e in kBasemapPresets)
-                    if (!app.baseMaps.any((m) => m['name'] == e['name']))
-                      ActionChip(
-                        label: Text(e['name']!, style: const TextStyle(fontSize: 11.5)),
-                        tooltip: e['tpl'],
-                        onPressed: () {
-                          ref.read(appProvider).baseMaps.add({
+                    ActionChip(
+                      label: Text(e['name']!, style: const TextStyle(fontSize: 11.5)),
+                      tooltip: e['tpl'],
+                      avatar: app.baseMaps.any((m) => m['name'] == e['name'])
+                          ? const Icon(Icons.check_rounded, size: 15)
+                          : null,
+                      backgroundColor:
+                          app.baseMaps.any((m) => m['name'] == e['name'])
+                              ? cs.primary.withValues(alpha: 0.15)
+                              : null,
+                      onPressed: () {
+                        final a = ref.read(appProvider);
+                        final ex =
+                            a.baseMaps.indexWhere((m) => m['name'] == e['name']);
+                        if (ex >= 0) {
+                          a.removeBasemap(ex);
+                        } else {
+                          a.addBasemap({
                             ...e,
                             'on': true, 'below': true, 'opacity': 1.0,
                             'zmin': 2, 'zmax': 19,
                           });
-                          ref.read(appProvider).saveSettings();
-                        },
-                      ),
+                        }
+                      },
+                    ),
                 ]),
                 const SizedBox(height: 10),
                 Row(children: [
-                  SizedBox(
-                    width: 320,
-                    child: TextField(
-                      controller: TextEditingController(text: app.tiandituTk),
-                      style: const TextStyle(fontSize: 12.5),
-                      decoration: const InputDecoration(
-                          labelText: '天地图 tk 密钥',
-                          isDense: true,
-                          border: OutlineInputBorder()),
-                      onChanged: (v) =>
-                          ref.read(appProvider).tiandituTk = v.trim(),
-                    ),
+                  FilledButton.tonalIcon(
+                    onPressed: _showKeysDialog,
+                    icon: const Icon(Icons.key_rounded, size: 17),
+                    label: const Text('密钥设置',
+                        style: TextStyle(fontSize: 12.5)),
                   ),
-                  const SizedBox(width: 8),
-                  FilledButton.tonal(
-                    onPressed: () => ref.read(appProvider).saveSettings(),
-                    child: const Text('保存密钥'),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _keysSummary(app),
+                      style: TextStyle(fontSize: 11.5, color: cs.outline),
+                    ),
                   ),
                 ]),
                 const SizedBox(height: 12),
@@ -305,35 +311,44 @@ class SettingsPage extends ConsumerWidget {
                     child: Row(children: [
                       Checkbox(
                         value: app.baseMaps[i]['on'] == true,
-                        onChanged: (v) {
-                          ref.read(appProvider).baseMaps[i]['on'] = v ?? false;
-                          ref.read(appProvider).saveSettings();
-                        },
+                        onChanged: (v) =>
+                            ref.read(appProvider).setBasemapOn(i, v ?? false),
                       ),
                       Expanded(
                         child: Text('${app.baseMaps[i]['name']}',
                             style: const TextStyle(fontSize: 12.5)),
                       ),
-                      const Text('作为底图(在下)',
-                          style: TextStyle(fontSize: 11)),
-                      Switch(
-                        value: app.baseMaps[i]['below'] != false,
-                        onChanged: (v) {
-                          ref.read(appProvider).baseMaps[i]['below'] = v;
-                          ref.read(appProvider).saveSettings();
-                        },
+                      SegmentedButton<int>(
+                        style: ButtonStyle(
+                          visualDensity: VisualDensity.compact,
+                          padding: const WidgetStatePropertyAll(
+                              EdgeInsets.symmetric(horizontal: 8)),
+                          textStyle: const WidgetStatePropertyAll(
+                              TextStyle(fontSize: 11)),
+                        ),
+                        segments: const [
+                          ButtonSegment(value: 0, label: Text('底图')),
+                          ButtonSegment(value: 1, label: Text('叠加')),
+                        ],
+                        selected: {app.baseMaps[i]['below'] != false ? 0 : 1},
+                        showSelectedIcon: false,
+                        onSelectionChanged: (s) => ref
+                            .read(appProvider)
+                            .setBasemapBelow(i, s.first == 0),
                       ),
+                      const SizedBox(width: 4),
                       IconButton(
                         tooltip: '删除',
                         icon:
                             const Icon(Icons.delete_outline_rounded, size: 18),
-                        onPressed: () {
-                          ref.read(appProvider).baseMaps.removeAt(i);
-                          ref.read(appProvider).saveSettings();
-                        },
+                        onPressed: () =>
+                            ref.read(appProvider).removeBasemap(i),
                       ),
                     ]),
                   ),
+                if (app.baseMaps.isEmpty)
+                  Text('尚未添加任何底图/叠加层（预览页将只有切片影像本身）',
+                      style: TextStyle(fontSize: 11.5, color: cs.outline)),
               ]),
             ),
           ),
@@ -358,5 +373,104 @@ class SettingsPage extends ConsumerWidget {
         ),
       ],
     );
+  }
+
+  /// 收集所有底图模板中的密钥占位符（排除瓦片坐标 {z}/{x}/{y} 与子域 {s}）。
+  Set<String> _keyPlaceholders() {
+    final keys = <String>{};
+    final app = ref.read(appProvider);
+    for (final e in [...kBasemapPresets, ...app.baseMaps]) {
+      final tpl = (e['tpl'] as String?) ?? '';
+      for (final m in RegExp(r'\{([a-zA-Z0-9]+)\}').allMatches(tpl)) {
+        final name = m.group(1)!;
+        if (!{'z', 'x', 'y', 's'}.contains(name)) keys.add(name);
+      }
+    }
+    return keys;
+  }
+
+  String _keyLabel(String name) => switch (name) {
+        'tk' => '天地图 tk 密钥',
+        _ => '密钥：$name',
+      };
+
+  /// 使用该密钥的服务名称列表。
+  List<String> _keyUsers(String name) {
+    final users = <String>[];
+    for (final e in kBasemapPresets) {
+      final tpl = e['tpl'] ?? '';
+      if (tpl.contains('{$name}')) users.add(e['name']!);
+    }
+    return users;
+  }
+
+  String _keysSummary(AppState app) {
+    final keys = _keyPlaceholders();
+    if (keys.isEmpty) return '当前底图模板不需要密钥';
+    final parts = keys.map((k) {
+      final v = app.mapKeys[k] ?? '';
+      final set = v.isNotEmpty;
+      return '$k：${set ? '已设置' : '未设置'}';
+    });
+    return '需要密钥的服务：${parts.join('，')}';
+  }
+
+  /// 密钥设置弹窗：按模板占位符动态列出所有需要密钥的服务，统一在一个弹窗维护。
+  Future<void> _showKeysDialog() async {
+    final app = ref.read(appProvider);
+    final keys = _keyPlaceholders().toList()..sort();
+    if (keys.isEmpty) return;
+    final controllers = {
+      for (final k in keys) k: TextEditingController(text: app.mapKeys[k] ?? ''),
+    };
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('地图服务密钥'),
+        content: SizedBox(
+          width: 400,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final k in keys) ...[
+                  TextField(
+                    controller: controllers[k],
+                    style: const TextStyle(fontSize: 12.5),
+                    decoration: InputDecoration(
+                      labelText: _keyLabel(k),
+                      hintText: '用于：${_keyUsers(k).join('、')}',
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    // 先取值，再释放控制器（dispose 后不可再读 text）
+    final values = {for (final k in keys) k: controllers[k]!.text.trim()};
+    for (final k in keys) {
+      controllers[k]!.dispose();
+    }
+    if (saved == true) {
+      for (final k in keys) {
+        ref.read(appProvider).setMapKey(k, values[k]!);
+      }
+    }
   }
 }

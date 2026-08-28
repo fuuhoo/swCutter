@@ -398,11 +398,13 @@ fn wire__crate__api__task_api__make_preview_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_source = <String>::sse_decode(&mut deserializer);
             let api_max_px = <u32>::sse_decode(&mut deserializer);
+            let api_alpha = <crate::engine::alpha::AlphaMode>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || {
-                        let output_ok = crate::api::task_api::make_preview(api_source, api_max_px)?;
+                        let output_ok =
+                            crate::api::task_api::make_preview(api_source, api_max_px, api_alpha)?;
                         std::result::Result::Ok(output_ok)
                     })(),
                 )

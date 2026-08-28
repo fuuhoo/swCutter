@@ -308,61 +308,78 @@ impl Geo {
 }
 
 thread_local! {
-    static PREVIEW_DECODER: std::cell::RefCell<Option<(PathBuf, ColorType, Geo, Decoder<File>)>> =
+    /// 线程本地解码器（仅路径复用；Geo 属调用级参数，不缓存——同一文件不同分辨率
+    /// 调用若沿用旧 Geo 会导致采样错位，见 preview_sample_parallel 使用处）。
+    static PREVIEW_DECODER: std::cell::RefCell<Option<(PathBuf, ColorType, Decoder<File>)>> =
         const { std::cell::RefCell::new(None) };
 }
 
-/// 进程级全图光栅缓存：巨型条带源只解码一次，预览/切片共用。
-static FULL_CACHE: std::sync::OnceLock<std::sync::Mutex<Vec<(PathBuf, std::sync::Arc<Vec<u8>>)>>> =
+/// 进程级预览解码块缓存：跨 make_preview 调用共享（粗图/精图/重复预览只解码一次）。
+/// LRU/FIFO 淘汰 + 字节预算封顶，避免长会话内存无限增长。
+const PREVIEW_CHUNK_BUDGET: u64 = 4 * 1024 * 1024 * 1024; // 4GB
+
+#[derive(Clone, PartialEq)]
+struct PreviewChunkKey {
+    path: PathBuf,
+    ci: u32,
+}
+
+struct PreviewChunkCache {
+    /// FIFO：头部最旧，尾部最新；记录块的实际数据尺寸（边缘块小于标称值）
+    entries: Vec<(PreviewChunkKey, std::sync::Arc<Vec<u8>>, (u32, u32))>,
+    bytes: u64,
+}
+
+static PREVIEW_CHUNK_CACHE: std::sync::OnceLock<std::sync::Mutex<PreviewChunkCache>> =
     std::sync::OnceLock::new();
 
-fn full_cache() -> &'static std::sync::Mutex<Vec<(PathBuf, std::sync::Arc<Vec<u8>>)>> {
-    FULL_CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+fn preview_chunk_cache() -> &'static std::sync::Mutex<PreviewChunkCache> {
+    PREVIEW_CHUNK_CACHE.get_or_init(|| {
+        std::sync::Mutex::new(PreviewChunkCache { entries: Vec::new(), bytes: 0 })
+    })
 }
 
-/// 巨型条带源 → 返回共享全图（必要时首次解码并入缓存）；其余返回 None。
-pub fn full_raster_if_giant(path: &Path) -> CoreResult<Option<std::sync::Arc<Vec<u8>>>> {
-    let key = path.to_path_buf();
-    if let Some(m) = full_cache().lock().unwrap().iter().find(|(p, _)| *p == key) {
-        return Ok(Some(std::sync::Arc::clone(&m.1)));
-    }
-    let mut r = SourceReader::open(path)?;
-    let gb = r.giant_strip_bytes();
-    let total = r.width as u64 * r.height as u64 * 4;
-    if gb <= 32 * 1024 * 1024 || total > 3 * 1024 * 1024 * 1024 {
-        return Ok(None);
-    }
-    let buf = std::sync::Arc::new(r.read_full_cancellable(None)?);
-    let arc = std::sync::Arc::clone(&buf);
-    full_cache().lock().unwrap().push((key, buf));
-    Ok(Some(arc))
-}
-
-/// 从共享全图直接采样预览网格。
-fn sample_from_full(
-    full: &[u8],
-    w: u32,
-    scale: u32,
-    ow: u32,
-    oh: u32,
-) -> Vec<u8> {
-    let mut canvas = vec![0u8; ow as usize * oh as usize * 4];
-    for oy in 0..oh {
-        let sy = (oy * scale) as usize;
-        for ox in 0..ow {
-            let sx = (ox * scale) as usize;
-            let si = (sy * w as usize + sx) * 4;
-            let di = (oy as usize * ow as usize + ox as usize) * 4;
-            if si + 3 < full.len() && di + 3 < canvas.len() {
-                canvas[di..di + 4].copy_from_slice(&full[si..si + 4]);
-            }
+/// 取（或解码并缓存）某文件第 `ci` 个 chunk 的 RGBA 数据及其实际尺寸。
+/// 命中缓存时复用，避免每次 make_preview 都整文件重解（当前 320 粗图 + 1400 精图 = 两次全量解码）。
+fn preview_chunk_rgba(
+    path: &Path,
+    d: &mut Decoder<File>,
+    ct: ColorType,
+    ci: u32,
+) -> CoreResult<(std::sync::Arc<Vec<u8>>, u32, u32)> {
+    let key = PreviewChunkKey { path: path.to_path_buf(), ci };
+    {
+        let cache = preview_chunk_cache().lock().unwrap();
+        if let Some(entry) = cache.entries.iter().find(|e| e.0 == key) {
+            return Ok((std::sync::Arc::clone(&entry.1), entry.2 .0, entry.2 .1));
         }
     }
-    canvas
+    let (dw, dh) = d.chunk_data_dimensions(ci);
+    let res = d.read_chunk(ci)?;
+    let raw8 =
+        crate::engine::meta::result_to_u8(&res).ok_or_else(|| CoreError::Unsupported("64 位样本".into()))?;
+    let rgba = convert_to_rgba(&raw8, ct, dw as usize, dh as usize)?;
+    let arc = std::sync::Arc::new(rgba);
+    {
+        let mut cache = preview_chunk_cache().lock().unwrap();
+        // 已有同名条目（并发写入）：直接复用已有缓存，避免重复占用
+        if let Some(entry) = cache.entries.iter().find(|e| e.0 == key) {
+            return Ok((std::sync::Arc::clone(&entry.1), entry.2 .0, entry.2 .1));
+        }
+        cache.bytes += arc.len() as u64;
+        cache.entries.push((key, std::sync::Arc::clone(&arc), (dw, dh)));
+        // 预算淘汰：从最旧（头部）开始移除，至少保留一条
+        while cache.bytes > PREVIEW_CHUNK_BUDGET && cache.entries.len() > 1 {
+            let oldest = cache.entries.remove(0);
+            cache.bytes = cache.bytes.saturating_sub(oldest.1.len() as u64);
+        }
+    }
+    Ok((arc, dw, dh))
 }
 
-/// 并行预览采样：多线程各持独立解码器，只解码含采样点的块。
-/// 墙钟时间约等于「解码总量 / 核数」，对标系统看图工具的多核解码。
+/// 并行预览采样：多线程各持独立解码器，解码块经进程级缓存复用。
+/// 首次调用完成整图解码（chunk 高度 > 采样步长时所有块都含采样点，无法跳过），
+/// 后续调用（精图/重复预览）直接命中缓存，只做采样 → 粗图+精图合计 ≈ 一次解码。
 pub fn preview_sample_parallel(path: &Path, max_px: u32) -> CoreResult<(u32, u32, Vec<u8>)> {
     let probe = SourceReader::open(path)?;
     let geo = Geo {
@@ -379,27 +396,21 @@ pub fn preview_sample_parallel(path: &Path, max_px: u32) -> CoreResult<(u32, u32
     let ((ow, oh, scale), needed) = probe.preview_plan(max_px);
     drop(probe);
 
-    // 巨型条带快速路径：共享全图直接取样（首次调用完成唯一一次全图解码）
-    if let Some(full) = full_raster_if_giant(path)? {
-        let canvas = sample_from_full(&full, geo.w, scale, ow, oh);
-        return Ok((ow, oh, canvas));
-    }
-
     let geo = Geo { scale, ow, oh, ..geo };
 
     let mut canvas = vec![0u8; ow as usize * oh as usize * 4];
     let path_buf = path.to_path_buf();
 
-    // 每个块独立解码并产出 (目标偏移, 像素) 列表，最后统一写入（区域互不相交）
+    // 每个块独立取（或解码）RGBA 并产出 (目标偏移, 像素) 列表，最后统一写入（区域互不相交）
     let results: Vec<Vec<(usize, [u8; 4])>> = {
         use rayon::prelude::*;
         needed
             .into_par_iter()
             .map(|ci| {
-                PREVIEW_DECODER.with(|cell| {
+                PREVIEW_DECODER.with(|cell| -> CoreResult<Vec<(usize, [u8; 4])>> {
                     let mut slot = cell.borrow_mut();
                     let need_reopen = match slot.as_ref() {
-                        Some((p, _, _, _)) => p != &path_buf,
+                        Some((p, _, _)) => p != &path_buf,
                         None => true,
                     };
                     if need_reopen {
@@ -407,10 +418,13 @@ pub fn preview_sample_parallel(path: &Path, max_px: u32) -> CoreResult<(u32, u32
                             File::open(path).map_err(|e| io_err(path.display().to_string(), e))?;
                         let mut d = Decoder::new(file)?;
                         let ct = d.colortype()?;
-                        *slot = Some((path_buf.clone(), ct, geo, d));
+                        *slot = Some((path_buf.clone(), ct, d));
                     }
-                    let (_, ct, g, d) = slot.as_mut().expect("decoder prepared");
-                    decode_chunk_cells(d, *ct, *g, ci)
+                    // Geo 是本次调用的参数（scale/ow/oh），一律用闭包捕获的当前值，
+                    // 绝不使用线程本地中旧调用的 Geo，避免分辨率变化后采样错位（花屏）。
+                    let (_, ct, d) = slot.as_mut().expect("decoder prepared");
+                    let (rgba, dw, dh) = preview_chunk_rgba(&path_buf, d, *ct, ci)?;
+                    Ok(cells_from_rgba(&rgba, dw, dh, &geo, ci))
                 })
                 .unwrap_or_default()
             })
@@ -429,23 +443,18 @@ pub fn preview_sample_parallel(path: &Path, max_px: u32) -> CoreResult<(u32, u32
     Ok((ow, oh, canvas))
 }
 
-/// 解码单个 chunk，返回其覆盖的采样点 (canvas 偏移, RGBA)。
-fn decode_chunk_cells(
-    d: &mut Decoder<File>,
-    ct: ColorType,
-    g: Geo,
+/// 从已解码的 chunk RGBA 提取预览网格采样点 (canvas 偏移, RGBA)。
+fn cells_from_rgba(
+    rgba: &[u8],
+    dw: u32,
+    dh: u32,
+    g: &Geo,
     ci: u32,
-) -> CoreResult<Vec<(usize, [u8; 4])>> {
+) -> Vec<(usize, [u8; 4])> {
     let (cox, coy) = g.origin(ci);
     if cox >= g.w || coy >= g.h {
-        return Ok(vec![]);
+        return vec![];
     }
-    let (dw, dh) = d.chunk_data_dimensions(ci);
-    let res = d.read_chunk(ci)?;
-    let raw8 = crate::engine::meta::result_to_u8(&res)
-        .ok_or_else(|| CoreError::Unsupported("64 位样本".into()))?;
-    let rgba = convert_to_rgba(&raw8, ct, dw as usize, dh as usize)?;
-
     let cw_eff = dw.min(g.w - cox).max(1);
     let ch_eff = dh.min(g.h - coy).max(1);
 
@@ -474,7 +483,7 @@ fn decode_chunk_cells(
             out.push((di, [rgba[si], rgba[si + 1], rgba[si + 2], rgba[si + 3]]));
         }
     }
-    Ok(out)
+    out
 }
 
 /// 将单 chunk 的原始 u8 数据转为 RGBA8。

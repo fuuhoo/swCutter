@@ -110,13 +110,13 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
 <html lang="zh-CN"><head><meta charset="utf-8">
 <title>swCutter 瓦片预览</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="./leaflet.css">
-<script src="./leaflet.js"></script>
+<link rel="stylesheet" href="./maplibre-gl.css">
+<script src="./maplibre-gl.js"></script>
 <style>
  html,body{margin:0;height:100%;background:#0d1117}
  #map{position:absolute;inset:0}
  #bar{position:absolute;left:0;right:0;top:0;z-index:1000;display:flex;gap:10px;align-items:center;
-      padding:8px 14px;background:#171c26e6;border-bottom:1px solid #ffffff14}
+      padding:8px 14px;background:#171c26e6;border-bottom:1px solid #ffffff14;backdrop-filter:blur(6px)}
  #bar b{font-size:13px;color:#dfe5ef}
  #badge{font-size:11.5px;font-weight:700;color:#8fb4ff;background:#4f8cff22;border:1px solid #4f8cff44;border-radius:999px;padding:3px 10px}
  .sp{flex:1}
@@ -129,16 +129,16 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
 </style></head>
 <body>
 <div id="bar">
- <b>🧩 swCutter 预览（Leaflet）</b>
+ <b>swCutter 预览（MapLibre）</b>
  <span class="sp"></span>
  <span id="badge"></span>
- <span id="hint">拖动 / 滚轮缩放 · 双击放大</span>
+ <span id="zlvl" style="font-size:11.5px;font-weight:700;color:#ffb4b4;background:#ff555522;border:1px solid #ff555544;border-radius:999px;padding:3px 10px;margin-left:6px"></span>
+ <span id="hint">拖动 / 滚轮缩放</span>
 </div>
 <div id="map"></div>
 <script>
 const CFG = __CFG__;
 
-// ---- 运行诊断：任何异常都显示在页面上，避免白屏无法排查 ----
 function showErr(msg){
   let el = document.getElementById('errBox');
   if(!el){ el = document.createElement('div'); el.id='errBox';
@@ -149,98 +149,159 @@ function showErr(msg){
 window.addEventListener('error', e => showErr('[error] '+e.message+' @'+(e.filename||'')+':'+(e.lineno||'?')));
 window.addEventListener('unhandledrejection', e => showErr('[promise] '+String(e.reason)));
 
-// ---- 世界网格 → 经纬度（EPSG:3857 XYZ/TMS 惯例）----
-function nn(z){ return Math.pow(2, z); }
-function tileLL(x, y, z){
-  const n = nn(z);
-  const lon = x / n * 360 - 180;
-  const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
-  return [lat, lon];
-}
-
-if (typeof L === 'undefined') {
+if (typeof maplibregl === 'undefined') {
   document.getElementById('map').innerHTML =
-    '<div class="offline">Leaflet 未能从 CDN 加载（离线？）。瓦片本身完好，可稍后重试或直接浏览 {z}/{x}/{y}.png 目录。</div>';
+    '<div class="offline">MapLibre GL JS 未能加载。瓦片本身完好，可直接浏览 {z}/{x}/{y}.png 目录。</div>';
 } else {
 try {
   document.getElementById('badge').textContent =
-    `Z${CFG.zmin}–Z${CFG.zmax} · ${CFG.tms?'TMS':'XYZ'} · ${CFG.t}px`;
+    'Z' + CFG.zmin + '–Z' + CFG.zmax + ' · ' + (CFG.tms?'TMS':'XYZ') + ' · ' + CFG.t + 'px';
 
-  // ---- 本地瓦片层 ----
-  const B = CFG.levels.find(l => l.z === CFG.zmax) || CFG.levels[CFG.levels.length - 1] || {ox:0, oy:0, tx:1, ty:1, z:CFG.zmax};
-  const bo = { ox: B.ox || 0, oy: B.oy || 0 };
-  // 瓦片包围盒的地理角点：SW=(左下) NE=(右上)；TMS 的 oy 即 XYZ 行号起点
-  const swCorner = tileLL(bo.ox,        bo.oy + B.ty, B.z);
-  const neCorner = tileLL(bo.ox + B.tx, bo.oy,        B.z);
-  let bbox = L.latLngBounds(swCorner, neCorner);
-  if(!bbox.isValid() || Math.abs(bbox.getNorth()-bbox.getSouth()) < 1e-9){
-    // 边界无效（异常数据）→ 退回全球范围
-    bbox = L.latLngBounds([-85, -180], [85, 180]);
-    showErr('[warn] 瓦片包围盒无效，已退回全球范围: '+JSON.stringify({sw:swCorner,ne:neCorner}));
+  // ---- 瓦片坐标 → 经纬度 ----
+  function tileLL(x, y, z) {
+    const n = Math.pow(2, z);
+    const lon = x / n * 360 - 180;
+    const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
+    return [lon, lat];
   }
 
-  const map = L.map('map', { zoomSnap: 0.25, zoomDelta: 0.5 });
-  map.attributionControl.setPrefix('Leaflet');
+  // ---- 计算瓦片边界 ----
+  const B = CFG.levels.find(function(l) { return l.z === CFG.zmax; }) || CFG.levels[CFG.levels.length - 1] || {ox:0, oy:0, tx:1, ty:1, z:CFG.zmax};
+  var bo = { ox: B.ox || 0, oy: B.oy || 0 };
+  var sw = tileLL(bo.ox, bo.oy + B.ty, B.z);
+  var ne = tileLL(bo.ox + B.tx, bo.oy, B.z);
+  var bounds = [sw, ne]; // [[west, south], [east, north]]
 
-  const localOpts = {
-    tms: !!CFG.tms,
-    tileSize: CFG.t,
-    minZoom: CFG.zmin,
+  // ---- 初始化 MapLibre ----
+  var map = new maplibregl.Map({
+    container: 'map',
+    style: {
+      version: 8,
+      sources: {},
+      layers: []
+    },
+    center: [(sw[0] + ne[0]) / 2, (sw[1] + ne[1]) / 2],
+    zoom: CFG.zmin,
     maxZoom: CFG.zmax,
-    minNativeZoom: CFG.zmin,
-    maxNativeZoom: CFG.zmax,
-    noWrap: true,
-    bounds: bbox,
-    attribution: 'swCutter'
-  };
-  const local = L.tileLayer('{z}/{x}/{y}.png', localOpts).addTo(map);
+    minZoom: CFG.zmin,
+    attributionControl: true
+  });
 
-  // ---- 在线图层（仅当设置启用了条目才会出现在 CFG.overlays）----
-  const ovs = (CFG.overlays || []).filter(o => o && o.on && o.tpl);
-  const items = [];
-  if (ovs.length) {
-    map.createPane('under').style.zIndex = 250;
-    map.createPane('over').style.zIndex  = 450;
-    ovs.forEach((o, i) => {
-      const tpl = String(o.tpl).replace(/\{tk\}/g, o.tk || '');
-      const subs = (o.subs && String(o.subs).length) ? String(o.subs).split('') : ['a'];
-      const layer = L.tileLayer(tpl, {
-        tms: !!o.tms,
-        opacity: (typeof o.opacity === 'number' ? o.opacity : 1),
-        minZoom: (o.zmin ?? 0),
-        maxZoom: (o.zmax ?? 22),
-        pane: o.below ? 'under' : 'over',
-        noWrap: true,
-        bounds: bbox,
-        subdomains: subs
-      }).addTo(map);
-      items.push({ name: o.name || ('layer' + i), layer });
+  map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+  map.addControl(new maplibregl.ScaleControl({imperial: false}), 'bottom-left');
+
+  // ---- 本地瓦片层（栅格瓦片作为 image source）----
+  map.on('load', function() {
+    // 添加栅格瓦片源
+    map.addSource('local-tiles', {
+      type: 'raster',
+      tiles: ['{z}/{x}/{y}.png'],
+      tileSize: CFG.t,
+      maxzoom: CFG.zmax,
+      minzoom: CFG.zmin,
+      bounds: [sw[0], sw[1], ne[0], ne[1]],
+      scheme: CFG.tms ? 'tms' : 'xyz'
     });
 
-    const p = document.createElement('div');
-    p.id = 'ovp';
-    p.innerHTML = '<b style="font-size:12px">在线图层</b>' + items.map((it, i) =>
-      `<div><label><input type="checkbox" checked data-i="${i}"> ${it.name}</label>` +
-      `<input type="range" min="10" max="100" value="${Math.round((it.layer.options.opacity ?? 1) * 100)}" data-r="${i}"></div>`
-    ).join('');
-    document.body.appendChild(p);
-    p.querySelectorAll('input[data-i]').forEach(el => el.onchange = e => {
-      const it = items[+e.target.dataset.i];
-      if (e.target.checked) it.layer.addTo(map); else map.removeLayer(it.layer);
+    map.addLayer({
+      id: 'local-tiles-layer',
+      type: 'raster',
+      source: 'local-tiles',
+      paint: {
+        'raster-resampling': 'linear'
+      }
     });
-    p.querySelectorAll('input[data-r]').forEach(el => el.oninput = e => {
-      items[+e.target.dataset.r].layer.setOpacity(+e.target.value / 100);
-    });
-  }
 
-  L.control.scale({ imperial: false }).addTo(map);
-  // ---- 主动定位到瓦片包围盒 ----
-  map.fitBounds(bbox, { padding: [24, 24] });
-  // ---- 自检：首帧后若本地瓦片 0 张 → 提示（排查白屏）----
-  setTimeout(() => {
-    const n = Object.keys(local._tiles || {}).length;
-    if(!n) showErr('[warn] 首帧没有任何本地瓦片被请求。检查：输出目录是否含 {z}/{x}/{y}.png、CFG.levels 是否为空、URL 是否为 http(s) 访问。');
-  }, 1200);
+    // 定位到瓦片范围
+    map.fitBounds(bounds, {padding: 24});
+
+    // 实时缩放级别
+    function updateZoom() {
+      var z = map.getZoom();
+      var rounded = Math.round(z * 4) / 4;
+      document.getElementById('zlvl').textContent = '当前 Z' + (rounded % 1 ? rounded.toFixed(2) : rounded);
+    }
+    map.on('zoom', updateZoom);
+    updateZoom();
+
+    // 在线图层（已在 Dart 端按 on=true 过滤；此处按 below 决定 z-order）
+    var ovs = (CFG.overlays || []).filter(function(o) { return o && o.on && o.tpl; });
+    var items = [];
+    ovs.forEach(function(o, i) {
+      // 展开所有子域 {s} → [s0, s1, ...]（如谷歌 '0123' → 4 个 URL 模板）；
+      // 无子域则保留单模板；密钥 {xxx} → o[xxx]；{z}/{x}/{y} 保留给 maplibre 解析。
+      var subs = (o.subs && String(o.subs).length) ? String(o.subs).split('') : [''];
+      var tiles = subs.map(function(s) {
+        var t = String(o.tpl).replace(/\{s\}/g, s);
+        return t.replace(/\{([a-zA-Z0-9]+)\}/g, function(_, k) {
+          return o[k] != null ? o[k] : ('{' + k + '}');
+        });
+      });
+      var layerId = 'online-' + i;
+      var sourceId = 'online-src-' + i;
+      map.addSource(sourceId, {
+        type: 'raster',
+        tiles: tiles,
+        tileSize: 256,
+        bounds: [sw[0], sw[1], ne[0], ne[1]],
+        scheme: o.tms ? 'tms' : 'xyz'
+      });
+      // 关键：底图（below=true）插在本地瓦片之前→本地瓦片盖在上面；
+      // 叠加（below=false）→ 默认加在顶部 → 在本地瓦片之上。
+      var layerSpec = {
+        id: layerId,
+        type: 'raster',
+        source: sourceId,
+        paint: {
+          'raster-opacity': typeof o.opacity === 'number' ? o.opacity : 1,
+          'raster-resampling': 'nearest'
+        }
+      };
+      if (typeof o.zmin === 'number') layerSpec.minzoom = o.zmin;
+      if (typeof o.zmax === 'number') layerSpec.maxzoom = o.zmax;
+      map.addLayer(layerSpec, o.below === false ? null : 'local-tiles-layer');
+      items.push({
+        name: o.name || ('layer' + i),
+        layerId: layerId,
+        defaultOn: o.below !== false  // 底图默认开启；叠加层默认关闭（避免一打开就盖住切片）
+      });
+    });
+
+    if (items.length) {
+      // 按 defaultOn 应用初始可见性
+      items.forEach(function(it) {
+        map.setLayoutProperty(it.layerId, 'visibility',
+          it.defaultOn ? 'visible' : 'none');
+      });
+      var p = document.createElement('div');
+      p.id = 'ovp';
+      p.innerHTML = '<b style="font-size:12px">在线图层</b>' + items.map(function(it, i) {
+        var checked = it.defaultOn ? ' checked' : '';
+        return '<div><label><input type="checkbox" data-i="' + i + '"' + checked + '> ' +
+          it.name + '</label>' +
+          '<input type="range" min="10" max="100" value="100" data-r="' + i + '"></div>';
+      }).join('');
+      document.body.appendChild(p);
+      p.querySelectorAll('input[data-i]').forEach(function(el) {
+        el.onchange = function(e) {
+          var it = items[+e.target.dataset.i];
+          map.setLayoutProperty(it.layerId, 'visibility', e.target.checked ? 'visible' : 'none');
+        };
+      });
+      p.querySelectorAll('input[data-r]').forEach(function(el) {
+        el.oninput = function(e) {
+          var it = items[+e.target.dataset.r];
+          map.setPaintProperty(it.layerId, 'raster-opacity', +e.target.value / 100);
+        };
+      });
+    }
+
+    // 自检
+    setTimeout(function() {
+      var source = map.getSource('local-tiles');
+      if (!source) showErr('[warn] local-tiles source 未创建');
+    }, 1200);
+  });
 } catch(err){
   showErr('[init] ' + (err && err.stack ? err.stack : String(err)));
 }
@@ -257,21 +318,117 @@ try {
     Ok(())
 }
 
-/// 本地内嵌 Leaflet（离线可用，杜绝 CDN 白屏）。
-static LEAFLET_JS: &str = include_str!("leaflet_assets/leaflet.js");
-static LEAFLET_CSS: &str = include_str!("leaflet_assets/leaflet.css");
+/// 本地内嵌 MapLibre GL JS（离线可用，杜绝 CDN 白屏）。
+static MAPLIBRE_JS: &str = include_str!("maplibre_assets/maplibre-gl.js");
+static MAPLIBRE_CSS: &str = include_str!("maplibre_assets/maplibre-gl.css");
 
 fn write_static_assets(out: &Path) -> CoreResult<()> {
-    let js_path = out.join("leaflet.js");
-    let css_path = out.join("leaflet.css");
+    let js_path = out.join("maplibre-gl.js");
+    let css_path = out.join("maplibre-gl.css");
     let need = |p: &Path, content: &str| -> bool {
         !p.exists() || std::fs::read_to_string(p).map(|s| s != content).unwrap_or(true)
     };
-    if need(&js_path, LEAFLET_JS) {
-        std::fs::write(&js_path, LEAFLET_JS).map_err(|e| io_err(js_path.display().to_string(), e))?;
+    if need(&js_path, MAPLIBRE_JS) {
+        std::fs::write(&js_path, MAPLIBRE_JS).map_err(|e| io_err(js_path.display().to_string(), e))?;
     }
-    if need(&css_path, LEAFLET_CSS) {
-        std::fs::write(&css_path, LEAFLET_CSS).map_err(|e| io_err(css_path.display().to_string(), e))?;
+    if need(&css_path, MAPLIBRE_CSS) {
+        std::fs::write(&css_path, MAPLIBRE_CSS).map_err(|e| io_err(css_path.display().to_string(), e))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_out(name: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("swcutter_writer_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn info_with(overlays_json: &str) -> PreviewInfo {
+        PreviewInfo {
+            source_w: 512,
+            source_h: 256,
+            tile_size: 256,
+            zmin: 0,
+            zmax: 1,
+            tms: false,
+            levels: vec![ManifestLevel { level: 1, width: 512, height: 256, tiles: 2, ox: 0, oy: 0, wy: 2 }],
+            overlays_json: overlays_json.to_string(),
+        }
+    }
+
+    /// 回归测试：settings.json 中的 below/opacity/on/subs 字段必须影响生成的 preview.html，
+    /// 防止"切换到 MapLibre 时丢失 below→z-order 语义"的 bug 复现。
+    #[test]
+    fn preview_html_respects_below_subdomains_and_keys() {
+        // 覆盖三类场景：底图（below=true）/叠加（below=false）/多子域
+        let overlays = r#"[
+            {"name":"OSM","tpl":"https://tile.openstreetmap.org/{s}/{z}/{x}/{y}.png",
+             "subs":"abc","on":true,"below":true,"opacity":0.7,"zmin":2,"zmax":18},
+            {"name":"天地图·影像","tpl":"https://t{s}.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk={tk}",
+             "subs":"01234567","on":true,"below":true,"opacity":1.0,"zmin":0,"zmax":18,"tk":"MY_TK"},
+            {"name":"标注叠加","tpl":"https://example.com/{z}/{x}/{y}.png",
+             "on":true,"below":false,"opacity":0.5}
+        ]"#;
+        let out = temp_out("basemap");
+        write_preview_html(&out, &info_with(overlays)).unwrap();
+        let html = std::fs::read_to_string(out.join(PREVIEW_HTML_NAME)).unwrap();
+
+        // 1) 关键 z-order 逻辑：在线图层 addLayer 必须按 below 决定 beforeId。
+        // JS 模板形式是 `o.below === false ? null : 'local-tiles-layer'` —— 这是 bug 修复点。
+        let has_below_logic = html.contains(
+            "o.below === false ? null : 'local-tiles-layer'"
+        );
+        assert!(has_below_logic,
+            "在线图层 addLayer 必须根据 below 决定 beforeId（修复：below=true→'local-tiles-layer'，below=false→null）");
+
+        // 2) 子域应展开：模板代码须按 subs.split('') 展开 tiles 数组
+        // 验证模板逻辑包含 `String(o.subs).split('')` 和 `.replace(/\{s\}/g, s)`
+        assert!(html.contains("String(o.subs).split('')"),
+            "subs 应按字符拆分为多个 URL 模板（修复：'0123'→4 个 URL）");
+        assert!(html.contains(".replace(/\\{s\\}/g, s)"),
+            "{{s}} 占位符应被每个子域字符替换");
+
+        // 3) tk 等密钥占位符注入逻辑：模板代码应将非 z/x/y/s 占位符通过 o[k] 替换。
+        // 这里的关键修复是覆盖所有密钥占位符（如 tk 占位符 → o.tk），且不应错误替换 z/x/y 占位符。
+        assert!(html.contains("return o[k] != null ? o[k] :"),
+            "密钥注入逻辑应使用 o[k] 替换非 z/x/y/s 占位符");
+
+        // 4) zmin/zmax 应作为 layer 配置写入
+        assert!(html.contains("layerSpec.minzoom = o.zmin") && html.contains("layerSpec.maxzoom = o.zmax"),
+            "zmin/zmax 应作为 minzoom/maxzoom 写入 layer");
+
+        // 5) 底图 defaultOn=true 应映射到 visibility:visible，叠加层 defaultOn=false → none
+        // 模板中是 `o.below !== false` 作为 defaultOn 计算
+        assert!(html.contains("defaultOn: o.below !== false"),
+            "defaultOn 必须按 below 计算（修复：below=true→visible=true 默认开，below=false→默认关）");
+        assert!(html.contains("it.defaultOn ? 'visible' : 'none'"),
+            "初始 visibility 必须按 defaultOn 应用");
+    }
+
+    /// 容错：未传入 overlays 时页面应正常生成且不报错
+    #[test]
+    fn preview_html_works_without_overlays() {
+        let out = temp_out("noov");
+        write_preview_html(&out, &info_with("[]")).unwrap();
+        let html = std::fs::read_to_string(out.join(PREVIEW_HTML_NAME)).unwrap();
+        assert!(html.contains("maplibregl.Map"));
+        // 没有在线图层时不会渲染 ovp 面板
+        assert!(!html.contains("id=\"ovp\""));
+    }
+
+    /// 容错：overlays_json 非法 JSON 时不应崩溃，应回退为空数组
+    #[test]
+    fn preview_html_tolerates_bad_overlays_json() {
+        let out = temp_out("bad");
+        write_preview_html(&out, &info_with("not json {")).unwrap();
+        let html = std::fs::read_to_string(out.join(PREVIEW_HTML_NAME)).unwrap();
+        assert!(html.contains("maplibregl.Map"));
+        assert!(!html.contains("id=\"ovp\""));
+    }
 }

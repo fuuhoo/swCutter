@@ -121,6 +121,7 @@ abstract class RustLibApi extends BaseApi {
   Future<Uint8List> crateApiTaskApiMakePreview({
     required String source,
     required int maxPx,
+    required AlphaMode alpha,
   });
 
   Future<bool> crateApiTaskApiPauseTask({required BigInt id});
@@ -440,6 +441,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<Uint8List> crateApiTaskApiMakePreview({
     required String source,
     required int maxPx,
+    required AlphaMode alpha,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -447,6 +449,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(source, serializer);
           sse_encode_u_32(maxPx, serializer);
+          sse_encode_box_autoadd_alpha_mode(alpha, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -459,7 +462,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiTaskApiMakePreviewConstMeta,
-        argValues: [source, maxPx],
+        argValues: [source, maxPx, alpha],
         apiImpl: this,
       ),
     );
@@ -467,7 +470,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiTaskApiMakePreviewConstMeta => const TaskConstMeta(
     debugName: "make_preview",
-    argNames: ["source", "maxPx"],
+    argNames: ["source", "maxPx", "alpha"],
   );
 
   @override
@@ -804,6 +807,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   bool dco_decode_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
+  }
+
+  @protected
+  AlphaMode dco_decode_box_autoadd_alpha_mode(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_alpha_mode(raw);
   }
 
   @protected
@@ -1155,6 +1164,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  AlphaMode sse_decode_box_autoadd_alpha_mode(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_alpha_mode(deserializer));
   }
 
   @protected
@@ -1601,6 +1616,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_alpha_mode(
+    AlphaMode self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_alpha_mode(self, serializer);
   }
 
   @protected

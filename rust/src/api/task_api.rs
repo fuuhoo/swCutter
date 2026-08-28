@@ -427,19 +427,23 @@ pub fn sample_pixel(source: String, x: i64, y: i64) -> anyhow::Result<Vec<u8>> {
     Ok(buf)
 }
 
-pub fn make_preview(source: String, max_px: u32) -> anyhow::Result<Vec<u8>> {
+/// 生成界面内预览缩略图（PNG 字节）。超大图按行带抽稀采样，内存有界。
+/// `alpha` 与切片一致地应用到预览图，使预览所见即所得（如 ColorKey 黑边→透明）。
+pub fn make_preview(source: String, max_px: u32, alpha: AlphaMode) -> anyhow::Result<Vec<u8>> {
     let (ow, oh, canvas) =
         crate::engine::source::preview_sample_parallel(Path::new(&source), max_px)?;
 
     // 轻度平滑后编码为 PNG
     let img =
         image::RgbaImage::from_raw(ow, oh, canvas).ok_or_else(|| anyhow::anyhow!("预览缓冲异常"))?;
-    let smooth = image::imageops::resize(
+    let mut smooth = image::imageops::resize(
         &img,
         ow.min(max_px),
         oh.min(max_px),
         image::imageops::FilterType::Triangle,
     );
+    // 与切片一致：在最终像素上应用透明模式（ColorKey 容差匹配边色→透明）
+    alpha.apply(smooth.as_mut());
     let mut png = Vec::new();
     image::codecs::png::PngEncoder::new(std::io::Cursor::new(&mut png))
         .write_image(
@@ -448,7 +452,8 @@ pub fn make_preview(source: String, max_px: u32) -> anyhow::Result<Vec<u8>> {
             smooth.height(),
             image::ExtendedColorType::Rgba8,
         )
-        .map_err(|e| anyhow::anyhow!("PNG 编码失败: {e}"))?;    Ok(png)
+        .map_err(|e| anyhow::anyhow!("PNG 编码失败: {e}"))?;
+    Ok(png)
 }
 
 // ---------------- API：订阅与任务控制 ----------------

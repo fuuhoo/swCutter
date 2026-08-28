@@ -40,8 +40,8 @@ fn probe_merc_plan() {
         .unwrap()
         .expect("无地理参考");
     println!(
-        "src {src}\n{}x{} sx={} sy={} degrees={} origin=({},{})",
-        info.width, info.height, g.sx, g.sy, g.degrees, g.mx0, g.my_top
+        "src {src}\n{}x{} sx={} sy={} origin=({},{})",
+        info.width, info.height, g.sx, g.sy, g.mx0, g.my_top
     );
     let b = g.bounds3857(info.width, info.height);
     println!("bounds3857 = {b:?}");
