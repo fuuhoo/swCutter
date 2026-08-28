@@ -1,0 +1,183 @@
+# swCutter Release Workflow
+#
+# 触发条件：推送形如 v*.*.* 的 tag（如 v0.4.0）
+# 作用：
+#   1. 同步 tag 版本号到 pubspec.yaml 和 lib/version.dart
+#   2. 跑 Rust 单元测试 + Flutter 静态检查（确保 release 不破功能）
+#   3. 构建 Windows Release 版
+#   4. 打包 zip 并发布到 GitHub Release
+#
+# 用法：
+#   git tag v0.4.0
+#   git push origin v0.4.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions:
+  contents: write   # 创建 Release 需要
+  actions: read
+
+jobs:
+  build-windows:
+    name: Build & Release (Windows x64)
+    runs-on: windows-latest
+
+    steps:
+      # ---- [1] 准备 ----
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 完整历史（生成 release notes 时可能用到）
+          fetch-depth: 0
+
+      - name: Resolve version from tag
+        id: version
+        shell: pwsh
+        run: |
+            # tag 形如 v0.4.0，取出 0.4.0
+            $tag = '${{ github.ref_name }}'
+            if ($tag.StartsWith('v')) { $version = $tag.Substring(1) } else { $version = $tag }
+            # build 号用当前 unix 时间戳后 8 位
+            $build = ([int]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() % 100000000)).ToString()
+            Write-Host "Tag: $tag"
+            Write-Host "App version: $version"
+            Write-Host "Build number: $build"
+            "version=$version" >> $env:GITHUB_OUTPUT
+            "build=$build"   >> $env:GITHUB_OUTPUT
+
+      - name: Show resolved version
+        run: |
+            echo "Resolved version: ${{ steps.version.outputs.version }}"
+            echo "Build number:    ${{ steps.version.outputs.build }}"
+
+      # ---- [2] 注入版本号到源码 ----
+      - name: Inject version into pubspec.yaml
+        shell: pwsh
+        run: |
+            $version = '${{ steps.version.outputs.version }}'
+            $build   = '${{ steps.version.outputs.build }}'
+            $content = Get-Content -Raw pubspec.yaml
+            # 替换 `version: 0.3.0+1` 行（正则不依赖具体旧值）
+            $new = [regex]::Replace($content, '(?m)^version:\s*[\d\.a-z\-]+\+\d+\s*$', "version: ${version}+${build}")
+            if ($new -eq $content) { throw "pubspec.yaml 中找不到 version: 行，未替换" }
+            Set-Content -Path pubspec.yaml -Value $new -Encoding UTF8 -NoNewline
+            Write-Host "pubspec.yaml:"
+            Get-Content pubspec.yaml | Select-String -Pattern '^version:' | ForEach-Object { Write-Host "  $_" }
+
+      - name: Inject version into lib/version.dart
+        shell: pwsh
+        run: |
+            $version = '${{ steps.version.outputs.version }}'
+            $content = Get-Content -Raw lib/version.dart
+            $new = [regex]::Replace($content, "(?m)const String kAppVersion = '[^']*';", "const String kAppVersion = '$version';")
+            if ($new -eq $content) { throw "lib/version.dart 中找不到 kAppVersion 行，未替换" }
+            Set-Content -Path lib/version.dart -Value $new -Encoding UTF8 -NoNewline
+            Write-Host "lib/version.dart:"
+            Get-Content lib/version.dart | Select-String -Pattern 'kAppVersion' | ForEach-Object { Write-Host "  $_" }
+
+      # ---- [3] 缓存 ----
+      - name: Cache Rust cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'rust -> target'
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\Pub\Cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      # ---- [4] 安装工具链 ----
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # 不锁版本，使用 pubspec.yaml 中 sdk ^3.13.1 所需的最新 stable
+          # （首次运行会下载；后续由 pub-cache 缓存加速）
+
+      # ---- [5] 测试编译 ----
+      - name: Rust unit tests (release profile)
+        shell: pwsh
+        run: |
+            cd rust
+            cargo test --release --quiet
+
+      - name: Flutter pub get
+        shell: pwsh
+        run: flutter pub get
+
+      - name: Flutter analyze
+        shell: pwsh
+        run: flutter analyze
+
+      # ---- [6] 构建 Windows Release ----
+      - name: Build Windows Release
+        shell: pwsh
+        run: |
+            flutter build windows --release `
+                --build-name=${{ steps.version.outputs.version }} `
+                --build-number=${{ steps.version.outputs.build }}
+
+      # ---- [7] 打包 ----
+      - name: Prepare release archive
+        shell: pwsh
+        env:
+          REPO_FULL_NAME: ${{ github.repository }}
+        run: |
+            $version = '${{ steps.version.outputs.version }}'
+            $src = "build\windows\x64\runner\Release"
+            if (-not (Test-Path $src)) { throw "构建产物目录不存在: $src" }
+            $zipName = "sw_cutter-v$version-windows-x64.zip"
+            $zipPath = "$env:RUNNER_TEMP\$zipName"
+
+            # 在产物目录里放一份安装说明
+            $notesPath = "$env:RUNNER_TEMP\RELEASE_NOTES.txt"
+            $notes = @"
+swCutter v$version (Windows x64)
+==================================
+
+解压后双击 `sw_cutter.exe` 运行。首次启动若弹出 SmartScreen 警告，
+点击"更多信息" → "仍要运行" 即可。
+
+完整源代码与跨平台说明见 https://github.com/$env:REPO_FULL_NAME
+"@
+            Set-Content -Path $notesPath -Value $notes -Encoding UTF8
+            Copy-Item $notesPath "$src\RELEASE_NOTES.txt"
+
+            # 打包
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            if (Test-Path $zipPath) { Remove-Item $zipPath }
+            [System.IO.Compression.ZipFile]::CreateFromDirectory($src, $zipPath)
+            Write-Host "Archive: $zipPath"
+            Get-Item $zipPath | Select-Object FullName, Length
+            # 暴露给后续 step
+            "ZIP_PATH=$zipPath" >> $env:GITHUB_ENV
+            "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sw_cutter-windows-x64
+          path: ${{ env.ZIP_PATH }}
+          if-no-files-found: error
+
+      # ---- [8] 发布到 GitHub Release ----
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: swCutter v${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: ${{ env.ZIP_PATH }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

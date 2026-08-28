@@ -1,0 +1,64 @@
+# swCutter CI Workflow
+#
+# 触发条件：
+#   - push 到 main 分支
+#   - 所有 pull request
+# 作用：
+#   - 跑 Rust 单元测试
+#   - 跑 Flutter 静态检查（不构建 exe，节省 CI 时间）
+#
+# 发布走 .github/workflows/release.yml（推送 tag 触发）
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test & Static Check
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Rust cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'rust -> target'
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\Pub\Cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # 不锁版本，使用 pubspec.yaml 中 sdk ^3.13.1 所需的最新 stable
+
+      - name: Rust unit tests
+        shell: pwsh
+        run: cd rust; cargo test --quiet
+
+      - name: Flutter pub get
+        shell: pwsh
+        run: flutter pub get
+
+      - name: Flutter analyze
+        shell: pwsh
+        run: flutter analyze
