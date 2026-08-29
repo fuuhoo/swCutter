@@ -297,13 +297,36 @@ jobs:
       - name: Install Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
-          # 与 Windows job / 本地便携工具链保持同版本（3.35.3/Dart 3.9.2）
+          # 不要设 channel（"stable" 现在已经 >= 4.x，与 3.35.3 的 Runner.xcodeproj 不兼容）。
+          # 单独用 flutter-version 锁死 3.35.3（pubspec sdk 兼容范围 / 仓库便携工具链同款）。
           flutter-version: 3.35.3
+          channel: stable   # 兜底；flutter-version 优先
+
+      - name: Verify Flutter version
+        shell: bash
+        run: flutter --version
 
       - name: Enable macOS desktop
         shell: bash
         run: flutter config --enable-macos-desktop
+
+      - name: Prefetch macOS engine artifacts
+        # macos_assemble.sh 需要 darwin-x64 / arm64 FlutterMacOS.framework；
+        # 显式 precache 避免 build 中才下载失败。
+        shell: bash
+        run: flutter precache --macos --no-android --no-ios --no-web --no-linux --no-windows --no-fuchsia
+
+      - name: Ensure macOS platform (Flutter ephemeral bootstrap)
+        # checkout 后 macos/Flutter/ephemeral 不存在（gitignored）。
+        # 跑一次 flutter create 让 ephemeral/ 与 Flutter-Release.xcconfig 模板就位。
+        # 命令是幂等的：已存在的源文件不会被覆盖。
+        shell: bash
+        run: |
+          flutter create --platforms=macos --org com.swcutter --project-name sw_cutter . 2>&1 | tail -20
+          echo "--- macos/Flutter/ 目录内容 ---"
+          ls -la macos/Flutter/ | head -10
+          echo "--- ephemeral/ ---"
+          ls -la macos/Flutter/ephemeral/ 2>&1 | head -10
 
       # ---- 测试编译 ----
       - name: Rust unit tests (release profile)
@@ -345,6 +368,12 @@ jobs:
         run: |
           set -o pipefail
           LOG="$RUNNER_TEMP/build_macos.log"
+          # Podfile.lock 在 macOS runner 上是 stale（基于本地手改的 Flutter 版本 / Xcode 版本生成），
+          # flutter build 检测到 lock 已存在会跳过 pod install → Pods-Runner-frameworks-*.xcfilelist
+          # 找不到，xcodebuild 报错。强制重装 pod 让 build 重新生成。
+          # 注意：不要清 macos/Flutter/ephemeral（已由前面的 `flutter create` 生成），
+          # 也不要清 Flutter-Release.xcconfig（否则 xcconfig 引用路径会先于 build 失效）。
+          rm -rf macos/Pods macos/Podfile.lock
           if ! flutter build macos --release \
             --build-name=${{ steps.version.outputs.version }} \
             --build-number=${{ steps.version.outputs.build }} 2>&1 | tee "$LOG"; then
@@ -353,6 +382,14 @@ jobs:
               echo "### macOS build failed (last 100 lines)"
               echo '```'
               tail -n 100 "$LOG"
+              echo '```'
+              echo "### macos/Flutter/ contents"
+              echo '```'
+              ls -la macos/Flutter/ 2>&1 || true
+              echo '```'
+              echo "### macos/Pods/ contents"
+              echo '```'
+              ls macos/Pods/Target\ Support\ Files/ 2>&1 || true
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
