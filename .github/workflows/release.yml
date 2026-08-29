@@ -43,7 +43,7 @@ jobs:
   # ============================================================
   build-windows:
     name: Build Windows x64 (zip)
-    runs-on: windows-latest
+    runs-on: windows-2022   # windows-latest 2026 已切到 Windows Server 2025，其 MSVC 路径与 flutter 3.x cmake 配置不兼容；0.1.2 时代就是用 windows-2022 跑通的
     # Flutter Windows Release 首次编译可能 30+ 分钟；总预留 90 分钟上限。
     timeout-minutes: 90
 
