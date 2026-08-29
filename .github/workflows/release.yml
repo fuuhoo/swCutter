@@ -79,7 +79,9 @@ jobs:
             $content = Get-Content -Raw pubspec.yaml
             # 替换 `version: 0.3.0+1` 行（正则不依赖具体旧值）
             $new = [regex]::Replace($content, '(?m)^version:\s*[\d\.a-z\-]+\+\d+\s*$', "version: ${version}+${build}")
-            if ($new -eq $content) { throw "pubspec.yaml 中找不到 version: 行，未替换" }
+            # 校验最终状态而非"内容是否变化"：tag 版本与文件现有值相同（如
+            # v0.3.0 ↔ kAppVersion '0.3.0'）时 replace 无差异属正常。
+            if (-not $new.Contains("version: ${version}+${build}")) { throw "pubspec.yaml 版本号写入校验失败" }
             Set-Content -Path pubspec.yaml -Value $new -Encoding UTF8 -NoNewline
             Write-Host "pubspec.yaml:"
             Get-Content pubspec.yaml | Select-String -Pattern '^version:' | ForEach-Object { Write-Host "  $_" }
@@ -90,7 +92,8 @@ jobs:
             $version = '${{ steps.version.outputs.version }}'
             $content = Get-Content -Raw lib/version.dart
             $new = [regex]::Replace($content, "(?m)const String kAppVersion = '[^']*';", "const String kAppVersion = '$version';")
-            if ($new -eq $content) { throw "lib/version.dart 中找不到 kAppVersion 行，未替换" }
+            # 同上：校验最终状态，替换结果与原文相同时不算失败
+            if (-not $new.Contains("const String kAppVersion = '$version';")) { throw "lib/version.dart 版本号写入校验失败" }
             Set-Content -Path lib/version.dart -Value $new -Encoding UTF8 -NoNewline
             Write-Host "lib/version.dart:"
             Get-Content lib/version.dart | Select-String -Pattern 'kAppVersion' | ForEach-Object { Write-Host "  $_" }
@@ -117,7 +120,9 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          # 不锁版本，使用 pubspec.yaml 中 sdk 约束允许的最新 stable
+          # 锁定与本地便携工具链一致的版本（pubspec 注释钦定的 3.35.3/Dart 3.9.2）。
+          # 用 latest stable 曾导致 macOS Release 构建失败，且不可复现。
+          flutter-version: 3.35.3
 
       # ---- [5] 测试编译 ----
       - name: Rust unit tests (release profile)
@@ -138,9 +143,18 @@ jobs:
       - name: Build Windows Release
         shell: pwsh
         run: |
+            $log = "$env:RUNNER_TEMP\build_windows.log"
             flutter build windows --release `
                 --build-name=${{ steps.version.outputs.version }} `
-                --build-number=${{ steps.version.outputs.build }}
+                --build-number=${{ steps.version.outputs.build }} 2>&1 | Tee-Object -FilePath $log
+            if ($LASTEXITCODE -ne 0) {
+                # 失败时把日志尾部写进 job summary（匿名可读，便于无凭证排障）
+                "### Windows build failed (last 100 lines)" | Add-Content $env:GITHUB_STEP_SUMMARY
+                '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+                Get-Content $log -Tail 100 | Add-Content $env:GITHUB_STEP_SUMMARY
+                '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+                exit 1
+            }
 
       # ---- [7] 打包 ----
       - name: Prepare release archive
@@ -259,6 +273,8 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # 与 Windows job / 本地便携工具链保持同版本（3.35.3/Dart 3.9.2）
+          flutter-version: 3.35.3
 
       - name: Enable macOS desktop
         shell: bash
@@ -283,9 +299,20 @@ jobs:
       - name: Build macOS Release
         shell: bash
         run: |
-          flutter build macos --release \
+          set -o pipefail
+          LOG="$RUNNER_TEMP/build_macos.log"
+          if ! flutter build macos --release \
             --build-name=${{ steps.version.outputs.version }} \
-            --build-number=${{ steps.version.outputs.build }}
+            --build-number=${{ steps.version.outputs.build }} 2>&1 | tee "$LOG"; then
+            # 失败时把日志尾部写进 job summary（匿名可读，便于无凭证排障）
+            {
+              echo "### macOS build failed (last 100 lines)"
+              echo '```'
+              tail -n 100 "$LOG"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       # ---- 打 DMG：经典“拖拽到 Applications”布局 + 使用说明 ----
       - name: Package DMG
