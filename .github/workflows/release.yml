@@ -126,10 +126,12 @@ jobs:
       - name: Install Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
-          # 锁定与本地便携工具链一致的版本（pubspec 注释钦定的 3.35.3/Dart 3.9.2）。
-          # 用 latest stable 曾导致 macOS Release 构建失败，且不可复现。
+          # 与 macOS job 同款：避免 channel: stable 与 flutter-version 冲突导致 Runner.xcodeproj 不兼容。
           flutter-version: 3.35.3
+
+      - name: Verify Flutter version
+        shell: pwsh
+        run: flutter --version
 
       # ---- [5] 测试编译 ----
       - name: Rust unit tests (release profile)
