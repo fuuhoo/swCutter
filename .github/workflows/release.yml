@@ -123,11 +123,15 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup MSBuild
+        # 用微软官方 setup-msbuild 装 MSBuild 17 + .NET SDK。给 cmake 提供
+        # VS Build Tools 探测能力（v0.1.2 当时没这步能过是因为 windows-latest
+        # 那时已预装；现在 runner image 升级后没装）。
+        uses: microsoft/setup-msbuild@v2
+
       - name: Install Flutter
         uses: subosito/flutter-action@v2
         with:
-          # 与 v0.1.2 跑通的配置一致：channel: stable + 不锁版本
-          # （锁 3.35.3 在 2026-08 的 windows-latest runner 上 cmake 找不到 VS generator）
           channel: stable
 
       - name: Verify Flutter version
