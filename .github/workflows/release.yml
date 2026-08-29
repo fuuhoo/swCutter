@@ -132,7 +132,10 @@ jobs:
       - name: Install Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          # 必须与 macOS job / pubspec.lock 同款 Flutter 3.35.3。channel: stable
+          # 现在会装 Flutter 4.x，pub get --enforce-lockfile 会失败。
+          flutter-version: 3.35.3
+          channel: stable   # 兜底
 
       - name: Verify Flutter version
         shell: pwsh
