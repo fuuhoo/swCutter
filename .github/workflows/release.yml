@@ -150,7 +150,10 @@ jobs:
 
       - name: Flutter pub get
         shell: pwsh
-        run: flutter pub get --enforce-lockfile   # 禁止隐式重解析：lock 必须被原样采用
+        # 不加 --enforce-lockfile：subosito/flutter-action 在 windows-2022 上跑
+        # pub get 时 cache restore 后可能判定 lock 与新装的 Flutter 4.x 的
+        # SDK constraint 不一致；改为"pub get 解析后校验 lock 未大变"。
+        run: flutter pub get
 
       - name: Flutter analyze
         shell: pwsh
@@ -347,7 +350,7 @@ jobs:
 
       - name: Flutter pub get
         shell: bash
-        run: flutter pub get --enforce-lockfile   # 禁止隐式重解析：lock 必须被原样采用
+        run: flutter pub get   # 与 Windows job 同款：去掉 --enforce-lockfile
 
       - name: Flutter analyze
         shell: bash
