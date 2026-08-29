@@ -812,13 +812,18 @@ impl Drop for SlotGuard {
 
 // ---------------- 轻量日志 ----------------
 
-/// 追加一行日志到 %APPDATA%\swCutter\logs\swcutter.log（失败静默）。
+/// 追加一行日志到应用数据目录的 `logs/swcutter.log`（失败静默）。
+///
+/// 平台路径由 [`crate::util::paths::app_data_dir`] 解析：
+/// - Windows: `%APPDATA%\swCutter\logs`
+/// - macOS:   `$HOME/Library/Application Support/swCutter/logs`
+/// - Linux:   `$XDG_DATA_HOME/swCutter/logs`（或 `~/.local/share/swCutter/logs`）
 pub(crate) fn log(level: &str, msg: &str) {
     use std::io::Write as _;
-    let dir = match std::env::var("APPDATA") {
-        Ok(d) => PathBuf::from(d).join("swCutter").join("logs"),
-        Err(_) => return,
+    let Some(root) = crate::util::paths::app_data_dir() else {
+        return;
     };
+    let dir = root.join("logs");
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }

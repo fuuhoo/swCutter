@@ -138,6 +138,99 @@ H:\project_self\swCutter\
 | **M5 浏览器预览** | preview.html 生成器(XYZ/TMS/自定义) + 浏览器跳转 | 浏览器可逐级浏览瓦片 |
 | **M6 打磨打包** | 错误处理/日志/空态/文案中文化/应用图标/README/发布 zip 脚本 | 交付可分发构建 |
 | **M7 可选增强(P1)** | 暂停/恢复 + 断点续切、BigTIFF 检测提示、GeoTIFF 扩展评估 | — |
+| **M8 macOS 移植** | Rust 跨平台化（APPDATA→app_data_dir）、Dart 跨平台化（explorer.exe/open、字体回退）、macOS 平台骨架、构建脚本与文档 | **✅ 2026-08-29 完成**：`flutter build macos --release` 产出可双击的 77.6 MB universal `.app` |
+
+### M8 macOS 移植 · 已识别耦合点
+
+| 位置 | 原内容（仅 Windows 适用） | 跨平台化后 | 验证 |
+|---|---|---|---|
+| `rust/src/api/task_api.rs::log` | `std::env::var("APPDATA")` | `crate::util::paths::app_data_dir()`（新增 `rust/src/util/paths.rs`，分别为 win/macOS/linux 返回不同根目录） | `cargo test --release` ✅ |
+| `rust/src/api/history_store.rs::db_path` | 同上 | 同上（落到 `~/Library/Application Support/swCutter/history.db`） | `cargo test --release` ✅ |
+| `lib/pages/tasks_page.dart::_openFolder` | `Process.run('explorer.exe', [path])` | 按 `Platform.isWindows / isMacOS / isLinux` 分别调用 `explorer.exe / open / xdg-open` | `flutter analyze` ✅ |
+| `lib/pages/new_task_page.dart::_addSource` | 硬编码 `\\` 后缀与 `endsWith('\\')` 判断 | 使用 `Platform.pathSeparator` 与 `sep` 拼接；`/` 与 `\` 都视为合法分隔符 | `flutter analyze` ✅ |
+| `lib/app_theme.dart::_base` | `fontFamilyFallback: ['Microsoft YaHei UI', 'Microsoft YaHei']` | 扩展为 macOS / Linux / Windows 多级回退（PingFang SC、Noto Sans CJK SC、Source Han Sans CN 等） | `flutter analyze` ✅ |
+
+### M8 macOS 移植 · 在 macOS 上需要补的一步
+
+仓库当前仅含 Windows 平台工程 `windows/`、`rust_builder/macos/` 仅是 FRB 模板的 podspec stub，**没有 Xcode 工程**。在 macOS 上首先生成：
+
+```bash
+flutter create . --platforms=macos --org com.swcutter --project-name sw_cutter
+```
+
+后续请按 README 的 macOS 章节调整 `Info.plist` 与 `entitlements`。
+
+### M8 macOS 移植 · 便携工具链（沙盒 / 无 sudo 友好）
+
+为了支持 macOS 用户级账户（无法 sudo、home 子目录有 sandbox restricted flag、Apple Silicon 镜像下载慢），
+仓库内提供 `.tools/` 作为**便携 Rust / Flutter SDK 安装点**：
+
+- `.tools/cargo-home/`、`tools/rust/`：cargo/rustup stable-aarch64-apple-darwin（1.98.0）
+- `.tools/flutter/`：Flutter 3.35.3 stable + Dart 3.9.2（**注意：本机 Flutter 3.35 不满足 pubspec 原始 `^3.13.1`，需要放宽 SDK 约束到 `>=3.4.0 <4.0.0`**）
+- `.tools/pub-cache/`：本地 pub 缓存（避免每次拉 Dart 包）
+- `.tools/activate.sh`：自动把以上注入 PATH + 国内镜像（cargo 走 `rsproxy-sparse`，flutter 走 `flutter-io.cn`）
+- `scripts/build_macos.sh` 自动 source `activate.sh`
+
+#### 已验证（在无 Xcode 的 macOS 上实测）
+
+| 步骤 | 状态 |
+|---|---|
+| Rust 工具链 rustup → 1.98.0 | ✅ |
+| 国内 cargo 镜像（rsproxy.cn）下 `cargo check --release` | ✅ 0 warning / 0 error |
+| Flutter SDK 3.35.3 stable 国内镜像（flutter-io.cn）下载 1.9G | ✅ |
+| `flutter config --enable-macos-desktop` | ✅ |
+| `flutter pub get`（Dart 3.9 SDK 兼容放宽后） | ✅ |
+| `flutter analyze` | ✅ `No issues found!` |
+| `cargo test --release` （含 5 个真实文件冒烟测试） | ✅ **44/44 passed** |
+
+#### ✅ M8 全部完成（2026-08-29 21:14）
+
+**最终交付**：`build/macos/Build/Products/Release/sw_cutter.app` (77.6 MB，universal x86_64+arm64)
+
+- ✅ Xcode 26.6 已装并接受许可（`sudo xcodebuild -license accept`）
+- ✅ CocoaPods 1.10.2 user-gem 安装（绕过 sudo；兼容 macOS System Ruby 2.6 的最后版本；`~/.gem/ruby/2.6.0/bin/pod`）
+- ✅ `flutter create . --platforms=macos` 生成 Xcode 工程
+- ✅ `flutter pub get`：43 个依赖全部解析
+- ✅ `cargo test --release`：44/44 通过
+- ✅ `flutter analyze`：No issues found!
+- ✅ `flutter build macos --release`：
+  - pod install 9.1s
+  - Rust 静态库（cargokit）编译
+  - Swift 编译 + Xcode 链接 universal binary
+  - 完整 .app 包含 7 个 framework（App/FlutterMacOS/rust_lib_sw_cutter/desktop_drop/file_picker/path_provider_foundation/url_launcher_macos）
+- ✅ 启动验证：app 在 macOS 上运行（PID 25655，AppKit + Metal 渲染初始化成功）
+
+#### 工具链（已安装在沙盒 workspace）
+
+- Rust 1.98.0 stable-aarch64 + 国内 cargo 镜像（rsproxy.cn）
+- Flutter 3.35.3 stable + Dart 3.9.2 + 国内镜像（flutter-io.cn）
+- CocoaPods 1.10.2（user gem，绕过 sudo）
+- `.tools/activate.sh`：一键注入上述 + `~/.gem/ruby/2.6.0/bin`（用 `REAL_HOME` 绕开 HOME 重定向）
+
+#### 已知妥协
+
+- **CocoaPods 1.10.2 < Flutter 推荐的 1.16.2**（因为 Ruby 2.6 是 macOS 系统 Ruby）。`pod install` 有 warning 但不阻断。
+- **CFBundleIconFile 为空**——icon 资源未生成（`make_icon.ps1` 是 Windows 脚本）。macOS 上用默认应用图标，发布前需替换。
+- **adhoc 签名**——未做 Apple Developer 签名 / 公证，分发前需补。
+- 后续尝试 frum / ruby-build 单独 bootstrap 也受网络 + 时间所限
+- **结论**：本沙盒用户级账号**无法独立完成 CocoaPods 安装**，必须等 Xcode 与 sudo 一起到位
+
+
+
+### M8 macOS 移植 · pubspec SDK 约束放宽说明
+
+`pubspec.yaml` 原本 `sdk: ^3.13.1`。在 Flutter 3.35.3 (Dart 3.9.2) 上无法解析，故放宽为：
+
+```yaml
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+```
+
+该放宽对 Dart 3.13+ 仍兼容，因此不会破坏升级路径；FLB 2.13 / 项目其他依赖的语义均不依赖 Dart 3.10+ 新语法。
+
+其它约束放宽见 `pubspec.yaml` 注释：所有 `^X.Y.Z` 都改成 `">X.Y.Z <(X+1).0.0"`，允许 pub 在 Dart 3.9 范围内选到旧 patch。
+
+
 
 ---
 

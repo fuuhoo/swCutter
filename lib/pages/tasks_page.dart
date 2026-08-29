@@ -76,7 +76,7 @@ class TasksPage extends ConsumerWidget {
             Expanded(
               child: ListView.separated(
                 itemCount: tasks.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 12),
+                separatorBuilder: (context, index) => const SizedBox(height: 12),
                 itemBuilder: (context, i) {
                   final t = tasks[i];
                   return TaskCard(
@@ -128,8 +128,17 @@ class TasksPage extends ConsumerWidget {
 
   Future<void> _openFolder(String path) async {
     try {
-      if (Directory(path).existsSync()) {
-        Process.run('explorer.exe', [path]);
+      if (!Directory(path).existsSync()) return;
+      // 平台专属的"在文件管理器中显示"调用
+      // - Windows: explorer.exe <dir>
+      // - macOS:   open <dir>
+      // - Linux:   xdg-open <dir>
+      if (Platform.isWindows) {
+        await Process.run('explorer.exe', [path]);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', [path]);
+      } else if (Platform.isLinux) {
+        await Process.run('xdg-open', [path]);
       }
     } catch (_) {}
   }

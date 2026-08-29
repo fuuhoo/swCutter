@@ -24,12 +24,19 @@ class NewTaskPage extends ConsumerStatefulWidget {
 class _NewTaskPageState extends ConsumerState<NewTaskPage> {
   /// 单文件选择：替换当前草稿（新建任务页始终只处理一个输入）。
   Future<void> _pickSource() async {
-    final files = await FilePicker.pickFiles(
+    // file_picker 11+ 把 pickFiles() 返回类型改为 `Future<FilePickerResult?>`，
+    // 这里做一次旧式回退，兼容 10 / 11。
+    final dynamic raw = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['tif', 'tiff'],
     );
-    for (final f in files) {
-      final p = f.path;
+    final List<dynamic> list = raw == null
+        ? const []
+        : (raw is List
+            ? raw
+            : (raw.files as List?) ?? const <dynamic>[]);
+    for (final f in list) {
+      final p = (f as dynamic).path as String?;
       if (p != null && p.isNotEmpty) {
         await _addSource(p);
         break;
@@ -60,14 +67,16 @@ class _NewTaskPageState extends ConsumerState<NewTaskPage> {
       draft.skipEmpty = app.skipEmpty;
       draft.resample = app.resample;
       // 输出目录规则：<默认输出>/<tiff名>；未设置默认目录时用源旁 <tiff名>_tiles
+      final sep = Platform.pathSeparator;
       final stem = draft.fileName.contains('.')
           ? draft.fileName.substring(0, draft.fileName.lastIndexOf('.'))
           : draft.fileName;
       final srcDir = Directory(path).parent.path;
-      final base = app.defaultOutput.isNotEmpty ? app.defaultOutput : '$srcDir\\';
-      draft.outputDir = base.endsWith('\\') || base.endsWith('/')
-          ? '$base$stem'
-          : '$base${Platform.pathSeparator}$stem';
+      final base = app.defaultOutput.isNotEmpty ? app.defaultOutput : srcDir;
+      final normalizedBase = base.endsWith(sep) || base.endsWith('/') || base.endsWith(r'\')
+          ? base
+          : '$base$sep';
+      draft.outputDir = '$normalizedBase$stem';
       store.drafts.clear();
       store.add(draft);
       unawaited(store.loadPreview(draft));

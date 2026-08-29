@@ -1,4 +1,8 @@
-//! 任务历史 SQLite 存储：%APPDATA%\swCutter\history.db
+//! 任务历史 SQLite 存储：
+//! - Windows: %APPDATA%\swCutter\history.db
+//! - macOS:   $HOME/Library/Application Support/swCutter/history.db
+//! - Linux:   $XDG_DATA_HOME/swCutter/history.db（或 $HOME/.local/share/swCutter/history.db）
+//!
 //! 每次保存为「全量重写」事务（列表小，简单可靠）；首次运行自动迁移旧 history.json。
 
 use std::path::PathBuf;
@@ -39,9 +43,7 @@ pub struct Rec {
 }
 
 fn db_path() -> Option<PathBuf> {
-    std::env::var("APPDATA")
-        .ok()
-        .map(|d| PathBuf::from(d).join("swCutter").join("history.db"))
+    crate::util::paths::app_data_dir().map(|d| d.join("history.db"))
 }
 
 fn conn() -> &'static Mutex<Connection> {

@@ -26,6 +26,18 @@ migrate_working_dir/
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
+**/macos/Flutter/ephemeral/
+**/macos/Flutter/Flutter-Debug.xcconfig
+**/macos/Flutter/Flutter-Release.xcconfig
+**/macos/Flutter/Generated.xcconfig
+**/macos/Flutter/flutter_export_environment.sh
+**/macos/Pods/
+**/macos/Podfile.lock
+**/macos/.symlinks/
+**/macos/Runner/Flutter/Debug.xcconfig
+**/macos/Runner/Flutter/Release.xcconfig
+**/macos/Runner/Flutter/Generated.xcconfig
+**.macos-xcodeproj/
 .dart_tool/
 .flutter-plugins-dependencies
 .pub-cache/
@@ -69,3 +81,7 @@ chromedp_*.log
 
 # 临时调研文件（webfetch / curl 拉下来的本地文档副本等）
 /.tmp/
+
+# 本仓库内便携工具链（Rust / Flutter / CocoaPods）。Xcode 未装时
+# `scripts/install_tools.sh` 把工具装到此处，并加 PATH 到构建脚本使用。
+/.tools/

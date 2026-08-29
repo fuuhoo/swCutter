@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconFile</key>
+	<string></string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>swCutter</string>
+	<key>CFBundleDisplayName</key>
+	<string>swCutter · TIFF 金字塔切片</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(FLUTTER_BUILD_NAME)</string>
+	<key>CFBundleVersion</key>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 com.swcutter. All rights reserved.</string>
+	<key>NSMainNibFile</key>
+	<string>MainMenu</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<!-- 高分辨率支持 -->
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!-- 软件分类（开发者库） -->
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.graphics</string>
+	<!-- 沙盒用户访问提示 -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>swCutter 需要访问桌面以读取/写入 TIFF 影像。</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>swCutter 需要访问文稿文件夹以选取源 TIFF 与导出瓦片目录。</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>swCutter 需要访问下载文件夹以选取大尺寸 TIFF 源文件。</string>
+</dict>
+</plist>

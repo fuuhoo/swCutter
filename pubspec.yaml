@@ -19,7 +19,12 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 0.3.0+1
 
 environment:
-  sdk: ^3.13.1
+  # Dart SDK 范围：
+  # - 下限 '>=3.4.0'：覆盖 Flutter 3.22+（FRB 2.13 / 该项目实际生产环境当 Dart 3.4 为基线）
+  # - 上限 '<4.0.0'：容忍 Dart 3.x 任意小版本；当前 Flutter 3.35.3 带的 Dart 3.9.2 即可用。
+  # 若本机 Flutter 是 3.41+ 自带 Dart 3.13，本约束也满足；不会产生不兼容。
+  # 历史备注：项目最初 pin ">3.13.1 <4.0.0"，是 Windows 主机 Flutter 3.36+ 的默认值。
+  sdk: '>=3.4.0 <4.0.0'
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -33,16 +38,17 @@ dependencies:
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
+  cupertino_icons: ">1.0.8 <2.0.0"
   rust_lib_sw_cutter:
     path: rust_builder
   flutter_rust_bridge: 2.13.0
-  freezed_annotation: ^3.1.0
-  flutter_riverpod: ^2.6.1
-  file_picker: ^12.1.0
-  url_launcher: ^6.3.2
-  desktop_drop: ^0.8.1
-  path_provider: ^2.1.6
+  freezed_annotation: ">=2.0.0 <4.0.0"
+  flutter_riverpod: ">=2.6.0 <3.4.0"
+  file_picker: ">=10.0.0 <12.0.0"
+  url_launcher: ">=6.0.0 <6.4.0"
+  desktop_drop: ">=0.5.0 <0.8.0"
+  # path_provider 2.1.6 需要 Dart ^3.10.0；用 2.1.5 兼容到 ^3.4.0
+  path_provider: ">=2.1.4 <2.1.6"
 
 dev_dependencies:
   flutter_test:
@@ -54,8 +60,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  freezed: ^4.0.0
-  build_runner: ^2.16.0
+  freezed: '>=2.0.0 <5.0.0'
+  build_runner: '>=2.4.0 <3.0.0'
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

@@ -18,7 +18,18 @@ class AppTheme {
       colorScheme: scheme,
       scaffoldBackgroundColor:
           isDark ? const Color(0xFF0F1219) : const Color(0xFFF6F8FC),
-      fontFamilyFallback: const ['Microsoft YaHei UI', 'Microsoft YaHei'],
+      // 跨平台中文 / 拉丁字体回退，避免某些 macOS / Linux 上中文回退到等宽字体。
+      // 顺序：macOS/iOS → Linux/跨平台字体 → Windows；缺失时逐级退化。
+      fontFamilyFallback: const [
+        // macOS / iOS 系统自带中文
+        'PingFang SC', 'Heiti SC', 'Songti SC', 'STSong',
+        // 跨平台中文（开源，免安装）
+        'Noto Sans CJK SC', 'Noto Sans SC', 'Source Han Sans CN',
+        // Windows 中文（兼容历史版本）
+        'Microsoft YaHei UI', 'Microsoft YaHei', 'SimHei',
+        // 拉丁
+        'SF Pro Text', 'Helvetica Neue', 'Segoe UI', 'Roboto',
+      ],
       cardTheme: CardThemeData(
         elevation: 0,
         color: isDark ? const Color(0xFF171C26) : Colors.white,
