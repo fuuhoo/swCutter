@@ -133,11 +133,29 @@ jobs:
 
       - name: Flutter pub get
         shell: pwsh
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile   # 禁止隐式重解析：lock 必须被原样采用
 
       - name: Flutter analyze
         shell: pwsh
-        run: flutter analyze
+        run: |
+            flutter pub deps --style=compact | Out-File "$env:RUNNER_TEMP\deps.txt"
+            flutter analyze 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\analyze.log"
+            if ($LASTEXITCODE -ne 0) {
+                # 失败诊断写入 job summary（匿名可读）：解析出的版本 + 分析日志
+                "### flutter analyze failed (log tail)" | Add-Content $env:GITHUB_STEP_SUMMARY
+                '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+                Get-Content "$env:RUNNER_TEMP\analyze.log" -Tail 60 | Add-Content $env:GITHUB_STEP_SUMMARY
+                '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+                "### resolved versions (riverpod/provider)" | Add-Content $env:GITHUB_STEP_SUMMARY
+                '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+                Select-String -Path "$env:RUNNER_TEMP\deps.txt" -Pattern 'riverpod|state_notifier' | ForEach-Object { $_.Line } | Add-Content $env:GITHUB_STEP_SUMMARY
+                '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+                "### flutter --version" | Add-Content $env:GITHUB_STEP_SUMMARY
+                '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+                flutter --version 2>&1 | Add-Content $env:GITHUB_STEP_SUMMARY
+                '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+                exit 1
+            }
 
       # ---- [6] 构建 Windows Release ----
       - name: Build Windows Release
@@ -289,11 +307,30 @@ jobs:
 
       - name: Flutter pub get
         shell: bash
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile   # 禁止隐式重解析：lock 必须被原样采用
 
       - name: Flutter analyze
         shell: bash
-        run: flutter analyze
+        run: |
+          set -o pipefail
+          flutter pub deps --style=compact > "$RUNNER_TEMP/deps.txt" 2>&1 || true
+          if ! flutter analyze 2>&1 | tee "$RUNNER_TEMP/analyze.log"; then
+            {
+              echo "### flutter analyze failed (log tail)"
+              echo '```'
+              tail -n 60 "$RUNNER_TEMP/analyze.log"
+              echo '```'
+              echo "### resolved versions (riverpod/provider)"
+              echo '```'
+              grep -iE "riverpod|state_notifier" "$RUNNER_TEMP/deps.txt" || true
+              echo '```'
+              echo "### flutter --version"
+              echo '```'
+              flutter --version 2>&1
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       # ---- 构建 macOS Release（工程为 ad-hoc 签名 "-"，无需证书）----
       - name: Build macOS Release
