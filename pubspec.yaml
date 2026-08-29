@@ -43,7 +43,9 @@ dependencies:
     path: rust_builder
   flutter_rust_bridge: 2.13.0
   freezed_annotation: ">=2.0.0 <4.0.0"
-  flutter_riverpod: ">=2.6.0 <3.4.0"
+  # 锁定 2.x：代码使用 ChangeNotifierProvider 的 2.x 主库导出，
+  # 3.x 若被解析进来会直接编译失败（CI 曾因此漂移挂掉）
+  flutter_riverpod: "^2.6.1"
   file_picker: ">=10.0.0 <12.0.0"
   url_launcher: ">=6.0.0 <6.4.0"
   desktop_drop: ">=0.5.0 <0.8.0"

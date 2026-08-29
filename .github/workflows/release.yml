@@ -30,6 +30,13 @@ permissions:
   contents: write   # 创建 Release 需要
   actions: read
 
+env:
+  # pubspec.lock 中的 hosted URL 是国内镜像 (pub.flutter-io.cn)。CI 若用默认
+  # pub.dev 源，pub 会判定 lock 不可满足而隐式重解析，导致依赖漂移
+  # （flutter_riverpod 2.6.1 → 3.x，其主库不再导出 ChangeNotifierProvider）。
+  # 必须与 lock 一致；配合 --enforce-lockfile 双保险。
+  PUB_HOSTED_URL: https://pub.flutter-io.cn
+
 jobs:
   # ============================================================
   # [1] Windows x64 构建 → zip
