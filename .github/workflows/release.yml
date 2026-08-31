@@ -205,26 +205,24 @@ jobs:
             $zipName = "sw_cutter-v$version-windows-x64.zip"
             $zipPath = "$env:RUNNER_TEMP\$zipName"
 
-            # 在产物目录里放一份安装说明（不含项目地址）
+            # 在产物目录里放一份安装说明（不含项目地址）。
+            # 全部 ASCII 字符 + LF 行尾（避免 PowerShell 解析中文双引号出错）。
             $notesPath = "$env:RUNNER_TEMP\RELEASE_NOTES.txt"
-            # 不使用 here-string（避免 PowerShell 变量与 YAML 解析器冲突），
-            # 改用普通字符串拼接。装饰线用 '*' 字符，避开 YAML 误识别的
-            # '=====' / '----'。
             $notes  = "swCutter v$version (Windows x64)`n"
             $notes += ("* " * 27) + "`n"
             $notes += "`n"
-            $notes += "安装：`n"
-            $notes += "  1) 解压 zip 到任意目录（推荐 C:\Program Files\swCutter）。`n"
-            $notes += "  2) 双击 sw_cutter.exe 运行。`n"
+            $notes += "Install:`n"
+            $notes += "  1) Unzip to any folder (recommended: C:\Program Files\swCutter).`n"
+            $notes += "  2) Double-click sw_cutter.exe.`n"
             $notes += "`n"
-            $notes += "首次启动若弹出 SmartScreen 警告：`n"
-            $notes += "  点击 '"更多信息"' -> '"仍要运行"' 即可。`n"
+            $notes += "First-run SmartScreen warning:`n"
+            $notes += "  Click 'More info' -> 'Run anyway'.`n"
             $notes += "`n"
-            $notes += "若提示'无法验证发布者'被拒：在 PowerShell 跑：`n"
+            $notes += "If blocked by SmartScreen, run in PowerShell:`n"
             $notes += "  Unblock-File -Path .\sw_cutter.exe`n"
             $notes += "`n"
-            $notes += "系统要求：Windows 10 64-bit 或更高。`n"
-            Set-Content -Path $notesPath -Value $notes -Encoding UTF8
+            $notes += "Requirement: Windows 10 64-bit or later.`n"
+            [System.IO.File]::WriteAllText($notesPath, $notes, [System.Text.UTF8Encoding]::new($true))
             Copy-Item $notesPath "$src\RELEASE_NOTES.txt"
 
             # 打包
