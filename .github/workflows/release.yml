@@ -198,8 +198,6 @@ jobs:
       - name: Prepare release archive
         id: pack
         shell: pwsh
-        env:
-          REPO_FULL_NAME: ${{ github.repository }}
         run: |
             $version = '${{ steps.version.outputs.version }}'
             $src = "build\windows\x64\runner\Release"
@@ -207,18 +205,25 @@ jobs:
             $zipName = "sw_cutter-v$version-windows-x64.zip"
             $zipPath = "$env:RUNNER_TEMP\$zipName"
 
-            # 在产物目录里放一份安装说明
+            # 在产物目录里放一份安装说明（不含项目地址）
             $notesPath = "$env:RUNNER_TEMP\RELEASE_NOTES.txt"
             # 不使用 here-string（避免 PowerShell 变量与 YAML 解析器冲突），
             # 改用普通字符串拼接。装饰线用 '*' 字符，避开 YAML 误识别的
             # '=====' / '----'。
-            $notes = "swCutter v$version (Windows x64)`n"
+            $notes  = "swCutter v$version (Windows x64)`n"
             $notes += ("* " * 27) + "`n"
             $notes += "`n"
-            $notes += "解压后双击 `sw_cutter.exe` 运行。首次启动若弹出 SmartScreen 警告，`n"
-            $notes += "点击`"更多信息`" → `"仍要运行`" 即可。`n"
+            $notes += "安装：`n"
+            $notes += "  1) 解压 zip 到任意目录（推荐 C:\Program Files\swCutter）。`n"
+            $notes += "  2) 双击 sw_cutter.exe 运行。`n"
             $notes += "`n"
-            $notes += "完整源代码与跨平台说明见 https://github.com/$env:REPO_FULL_NAME`n"
+            $notes += "首次启动若弹出 SmartScreen 警告：`n"
+            $notes += "  点击 '"更多信息"' -> '"仍要运行"' 即可。`n"
+            $notes += "`n"
+            $notes += "若提示'无法验证发布者'被拒：在 PowerShell 跑：`n"
+            $notes += "  Unblock-File -Path .\sw_cutter.exe`n"
+            $notes += "`n"
+            $notes += "系统要求：Windows 10 64-bit 或更高。`n"
             Set-Content -Path $notesPath -Value $notes -Encoding UTF8
             Copy-Item $notesPath "$src\RELEASE_NOTES.txt"
 
@@ -408,12 +413,10 @@ jobs:
             exit 1
           fi
 
-      # ---- 打 DMG：经典“拖拽到 Applications”布局 + 使用说明 ----
+      # ---- 打 DMG：经典“拖拽到 Applications”布局 + 使用说明 + 一键安装脚本 ----
       - name: Package DMG
         id: pack
         shell: bash
-        env:
-          REPO_FULL_NAME: ${{ github.repository }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           APP_PATH="build/macos/Build/Products/Release/sw_cutter.app"
@@ -429,20 +432,111 @@ jobs:
           cp -R "$APP_PATH" "$STAGING/"
           ln -s /Applications "$STAGING/Applications"
 
+          # ---- README.txt ----
+          # 不含任何项目地址（避免指向源码仓库的元信息泄露）
           {
             echo "swCutter v${VERSION} (macOS, Apple Silicon)"
             echo
-            echo "安装：将 sw_cutter 拖入右侧的 Applications 文件夹。"
+            echo "============================================================"
+            echo "  安装"
+            echo "============================================================"
             echo
-            echo "本安装包未做 Apple 公证，首次打开系统会拦截："
-            echo "  - macOS 14 及更早：右键点击 sw_cutter → 打开 → 再点“打开”。"
-            echo "  - macOS 15+：双击后在弹窗中点“完成”，再到 系统设置 → 隐私与安全性 →"
-            echo "    点击“仍要打开”。"
-            echo "若提示“已损坏，无法打开”，在终端执行："
-            echo "  xattr -cr /Applications/sw_cutter.app"
+            echo "  1) 把左侧的 sw_cutter 拖到右侧的 Applications 文件夹。"
+            echo "  2) 安装完成。"
             echo
-            echo "完整源代码与跨平台说明见 https://github.com/$REPO_FULL_NAME"
+            echo "============================================================"
+            echo "  首次打开会遇到 Gatekeeper 拦截（未做 Apple 公证）"
+            echo "============================================================"
+            echo
+            echo "  macOS 默认会弹窗："
+            echo "  “Apple无法验证“sw_cutter”是否包含可能危害Mac安全或"
+            echo "   泄漏隐私的恶意软件。”"
+            echo
+            echo "  两种处理方式（任选其一）："
+            echo
+            echo "  方式 A：右键打开（最简单）"
+            echo "    在 Finder 找到 sw_cutter.app → 右键 → 打开 → 弹窗里点"
+            echo "    “打开”。只需一次，之后双击就能直接运行。"
+            echo
+            echo "  方式 B：双击 install.command（同样只需一次）"
+            echo "    双击随包附带的 install.command，会弹终端问一次管理员密码"
+            echo "    （用于清除隔离属性），完成后即可正常启动。"
+            echo
+            echo "  macOS 15+（Sequoia）如果右键 / install.command 都不管用："
+            echo "    系统设置 → 隐私与安全性 → 拉到最下面 →"
+            echo "    点“仍要打开” → 弹窗里再点“打开”。"
+            echo
+            echo "============================================================"
+            echo "  后续更新"
+            echo "============================================================"
+            echo
+            echo "  1) 退出旧版 sw_cutter。"
+            echo "  2) 删 Applications 里的旧 sw_cutter.app。"
+            echo "  3) 打开新版 dmg，照上面再走一次安装流程。"
+            echo
+            echo "============================================================"
+            echo "  常见问题"
+            echo "============================================================"
+            echo
+            echo "  Q: 提示“已损坏，无法打开”。"
+            echo "  A: 在终端执行："
+            echo "       xattr -cr /Applications/sw_cutter.app"
+            echo "     或双击 install.command。"
+            echo
+            echo "  Q: 启动后立刻崩溃或窗口白屏。"
+            echo "  A: 该 dmg 仅适用于 Apple Silicon (M1/M2/M3/M4) Mac。"
+            echo "     Intel Mac 用户请取 x86_64 通用版。"
+            echo
+            echo "  Q: macOS 13 (Ventura) 及更早系统装不上。"
+            echo "  A: 需要 macOS 10.14+；早期系统未测试。"
           } > "$STAGING/README.txt"
+
+          # ---- install.command ----
+          # 一键脚本：清除 xattr + 可选安装到 /Applications
+          {
+            echo "#!/usr/bin/env bash"
+            echo "# swCutter 一键安装脚本（用户双击运行）"
+            echo "# 作用："
+            echo "#   1) 清除 .app 的隔离属性（解决“已损坏 / 无法验证”）"
+            echo "#   2) 如果还没装到 /Applications，复制过去"
+            echo "#   3) 启动 sw_cutter"
+            echo
+            echo "set -e"
+            echo
+            echo "APP_SRC=\"\${1:-}\""
+            echo "if [[ -z \"\$APP_SRC\" ]]; then"
+            echo "  # 默认定位：同目录的 sw_cutter.app（dmg 拖入 Applications 后的位置）"
+            echo "  if [[ -d \"\$HOME/Applications/sw_cutter.app\" ]]; then"
+            echo "    APP_SRC=\"\$HOME/Applications/sw_cutter.app\""
+            echo "  elif [[ -d \"/Applications/sw_cutter.app\" ]]; then"
+            echo "    APP_SRC=\"/Applications/sw_cutter.app\""
+            echo "  elif [[ -d \"\$(dirname \"\${BASH_SOURCE[0]}\")/sw_cutter.app\" ]]; then"
+            echo "    APP_SRC=\"\$(dirname \"\${BASH_SOURCE[0]}\")/sw_cutter.app\""
+            echo "  fi"
+            echo "fi"
+            echo
+            echo "if [[ -z \"\$APP_SRC\" || ! -d \"\$APP_SRC\" ]]; then"
+            echo "  echo \"❌ 找不到 sw_cutter.app。请先把 sw_cutter 拖到 Applications 文件夹。\""
+            echo "  echo \"   找不到？再跑一次这个脚本。\""
+            echo "  read -p \"按回车关闭...\""
+            echo "  exit 1"
+            echo "fi"
+            echo
+            echo "echo \"==> 找到: \$APP_SRC\""
+            echo
+            echo "echo \"==> 清除隔离属性（需要管理员密码）...\""
+            echo "sudo xattr -cr \"\$APP_SRC\""
+            echo
+            echo "echo \"==> 重新签名（ad-hoc，应用自身能跑就行）...\""
+            echo "sudo codesign --force --deep --sign - \"\$APP_SRC\""
+            echo
+            echo "echo \"==> 启动 sw_cutter...\""
+            echo "open \"\$APP_SRC\""
+            echo
+            echo "echo \"✅ 完成。可以关闭此窗口。\""
+            echo "read -p \"按回车关闭...\""
+          } > "$STAGING/install.command"
+          chmod +x "$STAGING/install.command"
 
           DMG_NAME="sw_cutter-v${VERSION}-macos-arm64.dmg"
           DMG_PATH="$RUNNER_TEMP/$DMG_NAME"
