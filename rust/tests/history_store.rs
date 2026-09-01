@@ -27,6 +27,7 @@ fn sample(id: u64) -> Rec {
         zmax: Some(9),
         skip_empty: false,
         mercator: true,
+        precise: true,
         status: "done".into(),
         level: 9,
         tiles_done: 100,

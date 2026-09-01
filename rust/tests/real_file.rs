@@ -39,6 +39,7 @@ fn real_file_smoke() {
         resample: Resample::Bilinear,
             skip_empty: false,
             mercator: false,
+            precise: false,
             preview_overlays: None,
     };
     let events = Arc::new(Mutex::new(0usize));
@@ -102,6 +103,7 @@ fn real_file_resume() {
         resample: Resample::Bilinear,
             skip_empty: false,
             mercator: false,
+            precise: false,
             preview_overlays: None,
     };
     let sink = Arc::new(Mutex::new(|_: CutEvent| {}));
@@ -175,6 +177,7 @@ fn real_file_mercator() {
         resample: Resample::Bilinear,
         skip_empty: false,
         mercator: true,
+        precise: true,
         preview_overlays: None,
     };
     let sink = Arc::new(Mutex::new(|_: CutEvent| {}));
@@ -225,6 +228,7 @@ fn real_file_mercator_overview_alpha() {
         resample: Resample::Bilinear,
         skip_empty: true,
         mercator: true,
+        precise: true,
         preview_overlays: None,
     };
     let sink = Arc::new(Mutex::new(|_: CutEvent| {}));
