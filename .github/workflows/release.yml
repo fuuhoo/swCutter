@@ -211,6 +211,23 @@ jobs:
             $notes  = "swCutter v$version (Windows x64)`n"
             $notes += ("* " * 27) + "`n"
             $notes += "`n"
+            $notes += "*** v0.3.10 IMPORTANT for users upgrading from < v0.3.10 ***`n"
+            $notes += "`n"
+            $notes += "Before v0.3.10, tiles aligned with Tianditu / OSM ONLY`n"
+            $notes += "if your source TIF was already Web Mercator (EPSG:3857).`n"
+            $notes += "For UTM / Chinese Gauss-Kruger (CGCS2000 / Xian 1980 /`n"
+            $notes += "Beijing 1954) sources, output was offset by hundreds of`n"
+            $notes += "meters (a historical bug).`n"
+            $notes += "`n"
+            $notes += "Since v0.3.10: mercator mode enables precise per-pixel`n"
+            $notes += "reverse projection by default (12 EPSG types covered).`n"
+            $notes += "Pixel-perfect alignment with Tianditu / OSM out of the`n"
+            $notes += "box, no extra settings needed.`n"
+            $notes += "`n"
+            $notes += "If you have tiles generated with < v0.3.10, re-run`n"
+            $notes += "the task to get correctly aligned output. CLI users can`n"
+            $notes += "pass --precise=false to opt out (3.5x faster but offset).`n"
+            $notes += "`n"
             $notes += "Install:`n"
             $notes += "  1) Unzip to any folder (recommended: C:\Program Files\swCutter).`n"
             $notes += "  2) Double-click sw_cutter.exe.`n"
@@ -434,6 +451,22 @@ jobs:
           # 不含任何项目地址（避免指向源码仓库的元信息泄露）
           {
             echo "swCutter v${VERSION} (macOS, Apple Silicon)"
+            echo
+            echo "============================================================"
+            echo "  v0.3.10 重要更新 (老用户必读)"
+            echo "============================================================"
+            echo
+            echo "  v0.3.10 之前：只有源 TIF 已经是 Web 墨卡托 (EPSG:3857)"
+            echo "  时切片才与天地图/OSM 对位准确；对 UTM / 中国高斯-克吕格"
+            echo "  (CGCS2000 / Xian 1980 / Beijing 1954) 等其它投影存在"
+            echo "  几百米到几米的偏位 (历史 bug)。"
+            echo
+            echo "  v0.3.10 起：mercator 模式默认开启精确反投影，覆盖 12"
+            echo "  类 EPSG，无需任何额外设置，与天地图/OSM 像素级一致。"
+            echo
+            echo "  如有 v0.3.10 之前生成的旧切片，建议重新跑一次任务以"
+            echo "  获得正确对位。命令行用户想用回老算法可加 --precise=false"
+            echo "  (会快 3.5 倍但有偏位)。"
             echo
             echo "============================================================"
             echo "  安装"
