@@ -20,6 +20,7 @@
 | 🌐 浏览器预览 | 完成后生成零依赖 `preview.html`（拖拽平移/滚轮缩放/级别自适应） |
 | 🧾 manifest.json | 记录源信息与全部参数，便于追溯 |
 | 📜 日志 | `%APPDATA%\swCutter\logs\swcutter.log` 记录任务生命周期与错误 |
+| 🎯 精确对位 | mercator 模式默认开启：每像素实时反投影，零偏位对接天地图/OSM/Google |
 
 ## 快速开始
 
@@ -74,6 +75,54 @@ bash scripts/build_macos.sh --release
 > - `macos/Runner/Info.plist` 中确认 `CFBundleDisplayVersion / CFBundleShortVersionString`，并补 `NSDesktopFolderUsageDescription / NSDocumentsFolderUsageDescription`（开启沙盒时 file_picker 需要）。
 > - 默认 `Release.entitlements` 关闭沙盒以避免拖拽/任意路径权限问题；如要开启 App Sandbox，再加 `com.apple.security.files.user-selected.read-write` 等 entitlement。
 
+## 支持的投影
+
+切片自动从 GeoTIFF 的 `GeoKeyDirectoryTag` 读出 `ProjectedCSType` / `GeographicType`，
+并按 `EPSG → PROJ.4` 映射出对应的源投影。Mercator 模式（Web 瓦片）会自动
+精确转换到 EPSG:3857。
+
+| 类别 | 涵盖范围 | 假东（false easting） |
+|---|---|---|
+| **Web Mercator** | EPSG:3857 | 球面公式 |
+| **WGS84 经纬度** | EPSG:4326 | 度（度 → 弧度自动转换） |
+| **UTM 北半球** | EPSG:32601–32660 | 标准 500K |
+| **UTM 南半球** | EPSG:32701–32760 | 标准 500K（自动 `+south`） |
+| **CGCS2000 / 3° GK** | EPSG:4513–4533 (zone 25–45) | (zone + 0.5) × 1M |
+| **CGCS2000 / 6° GK CM** | EPSG:4502–4512 (CM 75–135°E) | 500K |
+| **Xian 1980 / 3° GK zone** | EPSG:2362–2369 (zone 38–45) | (zone + 0.5) × 1M |
+| **Xian 1980 / 3° GK CM** | EPSG:2370–2384 (CM 75–117°E) | 500K |
+| **Xian 1980 / 6° GK zone** | EPSG:2327–2337 (zone 13–23) | (zone + 0.5) × 1M |
+| **Xian 1980 / 6° GK CM** | EPSG:2338–2342 (CM 75–93°E) | 500K |
+| **Beijing 1954 / 3° GK zone** | EPSG:2401–2421 (zone 25–45) | (zone + 0.5) × 1M |
+| **Beijing 1954 / 3° GK CM** | EPSG:2422–2427 (CM 75–90°E) | 500K |
+
+> 椭球对应：CGCS2000 → GRS80、Xian 1980 → IAU76、Beijing 1954 → krassovsky 1940。
+> 中国 3 个 datum 的 1° 椭球体与 WGS84 差异 < 0.1mm，对 1m/px TIF 切片可忽略。
+
+## 精确对位（mercator 模式）
+
+Web Mercator（EPSG:3857）切片在非 3857 源（UTM / 中国高斯-克吕格）下有两种反算方式：
+
+- **老算法（`--precise=false`）**：用 TIF 4 角平均的 `sx_3857` 线性反算每个目的像素的源坐标。
+  速度快（9683 瓦片 z=1–18 ≈ **3.4 秒**），但在 25°N UTM 48N 处
+  z=10 错位几百米、z=14 错位 ~263m（与天地图 / OSM 偏）。
+- **精确算法（默认 `--precise`）**：对每个目的像素用 `proj4rs` 实时
+  反算（3857 → 源投影），按 TIF 真实像素网格取源 `(i, j)`。
+  消除非线性投影偏差，与天地图 / OSM 像素级一致。
+  9683 瓦片 z=1–18 ≈ **12 秒**（Rust 比 Python 实现快 17 倍）。
+
+CLI 用法：
+
+```bash
+# 默认（推荐）：精确反投影，对位准
+swcutter -s input.tif -o output --mercator --alpha colorkey
+
+# 快速预览（老算法）：~3.5x 速度，牺牲对位精度
+swcutter -s input.tif -o output --mercator --alpha colorkey --precise=false
+```
+
+Flutter 端：TaskConfig 默认 `precise: true`，无需手动开启。
+
 ## 目录结构
 
 ```
@@ -107,7 +156,7 @@ bash scripts/build_macos.sh --release
 
 ```bash
 source .tools/activate.sh
-cd rust && cargo test --release     # 44/44 passed
+cd rust && cargo test --release     # 41/41 passed
 cd .. && flutter analyze            # No issues found!
 bash scripts/build_macos.sh --release
 open build/macos/Build/Products/Release/sw_cutter.app
