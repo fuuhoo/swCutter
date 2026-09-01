@@ -6,7 +6,6 @@
 import '../engine/alpha.dart';
 import '../engine/planner.dart';
 import '../frb_generated.dart';
-
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `conn`, `db_path`, `de`, `import_legacy_json`, `ser`
@@ -39,6 +38,9 @@ class Rec {
 
   /// GDAL mercator 绝对级别模式
   final bool mercator;
+
+  /// 精确反算：每个目的像素用 proj4rs 实时反算源投影坐标
+  final bool precise;
   final String status;
   final int level;
   final BigInt tilesDone;
@@ -64,6 +66,7 @@ class Rec {
     this.zmax,
     required this.skipEmpty,
     required this.mercator,
+    required this.precise,
     required this.status,
     required this.level,
     required this.tilesDone,
@@ -89,6 +92,7 @@ class Rec {
       zmax.hashCode ^
       skipEmpty.hashCode ^
       mercator.hashCode ^
+      precise.hashCode ^
       status.hashCode ^
       level.hashCode ^
       tilesDone.hashCode ^
@@ -116,6 +120,7 @@ class Rec {
           zmax == other.zmax &&
           skipEmpty == other.skipEmpty &&
           mercator == other.mercator &&
+          precise == other.precise &&
           status == other.status &&
           level == other.level &&
           tilesDone == other.tilesDone &&

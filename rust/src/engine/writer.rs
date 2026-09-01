@@ -113,7 +113,7 @@ pub fn write_preview_html(out: &Path, info: &PreviewInfo) -> CoreResult<()> {
 <link rel="stylesheet" href="./maplibre-gl.css">
 <script src="./maplibre-gl.js"></script>
 <style>
- html,body{margin:0;height:100%;background:#0d1117}
+ html,body{margin:0;height:100%;background:#000000}
  #map{position:absolute;inset:0}
  #bar{position:absolute;left:0;right:0;top:0;z-index:1000;display:flex;gap:10px;align-items:center;
       padding:8px 14px;background:#171c26e6;border-bottom:1px solid #ffffff14;backdrop-filter:blur(6px)}
@@ -236,7 +236,6 @@ try {
       tileSize: CFG.t,
       maxzoom: CFG.zmax,
       minzoom: CFG.zmin,
-      bounds: [sw[0], sw[1], ne[0], ne[1]],
       scheme: CFG.tms ? 'tms' : 'xyz'
     });
 

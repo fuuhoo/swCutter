@@ -31,6 +31,9 @@ pub struct TaskConfig {
     pub skip_empty: bool,
     /// true = GDAL mercator 绝对级别模式（要求 GeoTIFF）
     pub mercator: bool,
+    /// 精确反算：每个目的像素用 proj4rs 实时反算源投影坐标
+    /// 默认 true（推荐）：消除非线性投影偏差。设为 false 时退化为老算法。
+    pub precise: bool,
     /// 预览页底图/叠加层（JSON 数组字符串；None=空）
     pub preview_overlays: Option<String>,
 }
@@ -250,6 +253,7 @@ fn load_history(mgr: &Manager) {
                 resample: r.resample,
                 skip_empty: r.skip_empty,
                 mercator: r.mercator,
+                precise: r.precise,
                 preview_overlays: None,
             },
             status: Mutex::new(status),
@@ -289,6 +293,7 @@ fn persist(mgr: &Manager) {
             zmax: e.cfg.zmax,
             skip_empty: e.cfg.skip_empty,
             mercator: e.cfg.mercator,
+            precise: e.cfg.precise,
             status: e.status.lock().unwrap().clone(),
             level: snap.level,
             tiles_done: snap.tiles_done,
@@ -690,6 +695,7 @@ fn worker(entry: Arc<TaskEntry>) {
         resample: entry.cfg.resample,
         skip_empty: entry.cfg.skip_empty,
         mercator: entry.cfg.mercator,
+        precise: entry.cfg.precise,
         preview_overlays: entry.cfg.preview_overlays.clone(),
     };
 

@@ -405,6 +405,8 @@ class TaskDraft {
         resample: resample,
         skipEmpty: skipEmpty,
         mercator: mercator,
+        // 默认开启精确反算（推荐），消除 UTM/中国 GK 等非线性投影偏差
+        precise: true,
         previewOverlays: previewOverlays,
       );
 }

@@ -6,7 +6,6 @@
 import '../engine/alpha.dart';
 import '../engine/planner.dart';
 import '../frb_generated.dart';
-
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'task_api.freezed.dart';
@@ -21,59 +20,53 @@ Future<ImageBrief> readImageInfo({required String path}) =>
 
 /// 按给定参数估算各级瓦片数（UI 滑块实时调用，纯计算无 IO）。
 /// mercator=true 时走 GDAL 绝对级别语义（需要地理参考）。
-Future<PyramidEstimate> estimatePyramidEx({
-  required String source,
-  required int width,
-  required int height,
-  required int tileSize,
-  int? zmin,
-  int? zmax,
-  required bool mercator,
-}) => RustLib.instance.api.crateApiTaskApiEstimatePyramidEx(
-  source: source,
-  width: width,
-  height: height,
-  tileSize: tileSize,
-  zmin: zmin,
-  zmax: zmax,
-  mercator: mercator,
-);
+Future<PyramidEstimate> estimatePyramidEx(
+        {required String source,
+        required int width,
+        required int height,
+        required int tileSize,
+        int? zmin,
+        int? zmax,
+        required bool mercator}) =>
+    RustLib.instance.api.crateApiTaskApiEstimatePyramidEx(
+        source: source,
+        width: width,
+        height: height,
+        tileSize: tileSize,
+        zmin: zmin,
+        zmax: zmax,
+        mercator: mercator);
 
 /// 兼容旧接口：相对模式估算。
-Future<List<LevelEstimate>> estimatePyramid({
-  required int width,
-  required int height,
-  required int tileSize,
-  int? zmin,
-  int? zmax,
-}) => RustLib.instance.api.crateApiTaskApiEstimatePyramid(
-  width: width,
-  height: height,
-  tileSize: tileSize,
-  zmin: zmin,
-  zmax: zmax,
-);
+Future<List<LevelEstimate>> estimatePyramid(
+        {required int width,
+        required int height,
+        required int tileSize,
+        int? zmin,
+        int? zmax}) =>
+    RustLib.instance.api.crateApiTaskApiEstimatePyramid(
+        width: width,
+        height: height,
+        tileSize: tileSize,
+        zmin: zmin,
+        zmax: zmax);
 
 /// 生成界面内预览缩略图（PNG 字节）。超大图按行带抽稀采样，内存有界。
 /// 采样源图指定坐标的 RGBA 像素值（供预览点选取色）。
-Future<Uint8List> samplePixel({
-  required String source,
-  required PlatformInt64 x,
-  required PlatformInt64 y,
-}) =>
+Future<Uint8List> samplePixel(
+        {required String source,
+        required PlatformInt64 x,
+        required PlatformInt64 y}) =>
     RustLib.instance.api.crateApiTaskApiSamplePixel(source: source, x: x, y: y);
 
 /// 生成界面内预览缩略图（PNG 字节）。超大图按行带抽稀采样，内存有界。
 /// `alpha` 与切片一致地应用到预览图，使预览所见即所得（如 ColorKey 黑边→透明）。
-Future<Uint8List> makePreview({
-  required String source,
-  required int maxPx,
-  required AlphaMode alpha,
-}) => RustLib.instance.api.crateApiTaskApiMakePreview(
-  source: source,
-  maxPx: maxPx,
-  alpha: alpha,
-);
+Future<Uint8List> makePreview(
+        {required String source,
+        required int maxPx,
+        required AlphaMode alpha}) =>
+    RustLib.instance.api
+        .crateApiTaskApiMakePreview(source: source, maxPx: maxPx, alpha: alpha);
 
 Stream<TaskEvent> subscribeEvents() =>
     RustLib.instance.api.crateApiTaskApiSubscribeEvents();
@@ -202,7 +195,10 @@ class PyramidEstimate {
   final int? nativeZoom;
   final List<LevelEstimate> levels;
 
-  const PyramidEstimate({this.nativeZoom, required this.levels});
+  const PyramidEstimate({
+    this.nativeZoom,
+    required this.levels,
+  });
 
   @override
   int get hashCode => nativeZoom.hashCode ^ levels.hashCode;
@@ -233,6 +229,9 @@ class TaskConfig {
   /// true = GDAL mercator 绝对级别模式（要求 GeoTIFF）
   final bool mercator;
 
+  /// 精确反算：每个目的像素用 proj4rs 实时反算源投影坐标
+  final bool precise;
+
   /// 预览页底图/叠加层（JSON 数组字符串；None=空）
   final String? previewOverlays;
 
@@ -247,6 +246,7 @@ class TaskConfig {
     required this.resample,
     required this.skipEmpty,
     required this.mercator,
+    required this.precise,
     this.previewOverlays,
   });
 
@@ -262,6 +262,7 @@ class TaskConfig {
       resample.hashCode ^
       skipEmpty.hashCode ^
       mercator.hashCode ^
+      precise.hashCode ^
       previewOverlays.hashCode;
 
   @override
@@ -279,6 +280,7 @@ class TaskConfig {
           resample == other.resample &&
           skipEmpty == other.skipEmpty &&
           mercator == other.mercator &&
+          precise == other.precise &&
           previewOverlays == other.previewOverlays;
 }
 
@@ -376,7 +378,10 @@ class TaskEvent {
   final BigInt taskId;
   final TaskEventKind kind;
 
-  const TaskEvent({required this.taskId, required this.kind});
+  const TaskEvent({
+    required this.taskId,
+    required this.kind,
+  });
 
   @override
   int get hashCode => taskId.hashCode ^ kind.hashCode;
@@ -394,12 +399,15 @@ class TaskEvent {
 sealed class TaskEventKind with _$TaskEventKind {
   const TaskEventKind._();
 
-  const factory TaskEventKind.statusChanged({required String status}) =
-      TaskEventKind_StatusChanged;
-  const factory TaskEventKind.started({required BigInt totalTiles}) =
-      TaskEventKind_Started;
-  const factory TaskEventKind.levelStart({required int level}) =
-      TaskEventKind_LevelStart;
+  const factory TaskEventKind.statusChanged({
+    required String status,
+  }) = TaskEventKind_StatusChanged;
+  const factory TaskEventKind.started({
+    required BigInt totalTiles,
+  }) = TaskEventKind_Started;
+  const factory TaskEventKind.levelStart({
+    required int level,
+  }) = TaskEventKind_LevelStart;
   const factory TaskEventKind.progress({
     required int level,
     required BigInt tilesDone,
@@ -407,8 +415,9 @@ sealed class TaskEventKind with _$TaskEventKind {
     required BigInt bytesWritten,
     required BigInt elapsedMs,
   }) = TaskEventKind_Progress;
-  const factory TaskEventKind.finished({required TaskSummary summary}) =
-      TaskEventKind_Finished;
+  const factory TaskEventKind.finished({
+    required TaskSummary summary,
+  }) = TaskEventKind_Finished;
 }
 
 class TaskSummary {

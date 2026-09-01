@@ -4,7 +4,6 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
-
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'alpha.freezed.dart';
@@ -17,7 +16,9 @@ sealed class AlphaMode with _$AlphaMode {
   const factory AlphaMode.keep() = AlphaMode_Keep;
 
   /// Alpha 阈值：a < below → 全透明
-  const factory AlphaMode.threshold({required int below}) = AlphaMode_Threshold;
+  const factory AlphaMode.threshold({
+    required int below,
+  }) = AlphaMode_Threshold;
 
   /// 颜色键：接近指定颜色的像素置透明
   const factory AlphaMode.colorKey({

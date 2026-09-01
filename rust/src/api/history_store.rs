@@ -29,6 +29,8 @@ pub struct Rec {
     pub skip_empty: bool,
     /// GDAL mercator 绝对级别模式
     pub mercator: bool,
+    /// 精确反算：每个目的像素用 proj4rs 实时反算源投影坐标
+    pub precise: bool,
     pub status: String,
     pub level: u32,
     pub tiles_done: u64,
@@ -68,6 +70,7 @@ fn conn() -> &'static Mutex<Connection> {
                 zmax INTEGER,
                 skip_empty INTEGER NOT NULL DEFAULT 0,
                 mercator INTEGER NOT NULL DEFAULT 0,
+                precise INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL,
                 level INTEGER NOT NULL DEFAULT 0,
                 tiles_done INTEGER NOT NULL DEFAULT 0,
@@ -83,6 +86,7 @@ fn conn() -> &'static Mutex<Connection> {
         // 旧库迁移：补列（已存在则忽略）
         let _ = c.execute_batch("ALTER TABLE tasks ADD COLUMN skip_empty INTEGER NOT NULL DEFAULT 0");
         let _ = c.execute_batch("ALTER TABLE tasks ADD COLUMN mercator INTEGER NOT NULL DEFAULT 0");
+        let _ = c.execute_batch("ALTER TABLE tasks ADD COLUMN precise INTEGER NOT NULL DEFAULT 0");
         let _ = c.execute_batch("ALTER TABLE tasks ADD COLUMN bounds_json TEXT");
         Mutex::new(c)
     })
@@ -105,7 +109,7 @@ pub fn load() -> Vec<Rec> {
     let c = conn().lock().unwrap();
     let mut stmt = match c.prepare(
         "SELECT id, source, output, tile_size, scheme, alpha, resample, zmin, zmax,
-                skip_empty, mercator,
+                skip_empty, mercator, precise,
                 status, level, tiles_done, total_tiles, bytes_written, elapsed_ms,
                 error, started_ms, finished_ms, bounds_json
          FROM tasks ORDER BY id ASC",
@@ -129,16 +133,18 @@ pub fn load() -> Vec<Rec> {
             zmax: r.get::<_, Option<i64>>(8)?.map(|v| v as u32),
             skip_empty: r.get::<_, i64>(9)? != 0,
             mercator: r.get::<_, i64>(10)? != 0,
-            status: r.get(11)?,
-            level: r.get::<_, i64>(12)? as u32,
-            tiles_done: r.get::<_, i64>(13)? as u64,
-            total_tiles: r.get::<_, i64>(14)? as u64,
-            bytes_written: r.get::<_, i64>(15)? as u64,
-            elapsed_ms: r.get::<_, i64>(16)? as u64,
-            error: r.get(17)?,
-            started_ms: r.get::<_, i64>(18)? as u64,
-            finished_ms: r.get::<_, i64>(19)? as u64,
-            bounds_json: r.get(20)?,
+            // 旧数据库无 precise 列: 当作 true (新默认 = 推荐)
+            precise: r.get::<_, i64>(11).map(|v| v != 0).unwrap_or(true),
+            status: r.get(12)?,
+            level: r.get::<_, i64>(13)? as u32,
+            tiles_done: r.get::<_, i64>(14)? as u64,
+            total_tiles: r.get::<_, i64>(15)? as u64,
+            bytes_written: r.get::<_, i64>(16)? as u64,
+            elapsed_ms: r.get::<_, i64>(17)? as u64,
+            error: r.get(18)?,
+            started_ms: r.get::<_, i64>(19)? as u64,
+            finished_ms: r.get::<_, i64>(20)? as u64,
+            bounds_json: r.get(21)?,
         })
     };
     let rows = stmt.query_map([], map);
@@ -159,10 +165,10 @@ pub fn save(recs: &[Rec]) {
         {
             let mut ins = c.prepare_cached(
                 "INSERT INTO tasks (id, source, output, tile_size, scheme, alpha, resample,
-                                    zmin, zmax, skip_empty, mercator,
+                                    zmin, zmax, skip_empty, mercator, precise,
                                     status, level, tiles_done, total_tiles,
                                     bytes_written, elapsed_ms, error, started_ms, finished_ms, bounds_json)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
             )?;
             for r in recs {
                 ins.execute(rusqlite::params![
@@ -177,6 +183,7 @@ pub fn save(recs: &[Rec]) {
                     r.zmax.map(|v| v as i64),
                     r.skip_empty as i64,
                     r.mercator as i64,
+                    r.precise as i64,
                     r.status,
                     r.level as i64,
                     r.tiles_done as i64,
@@ -249,6 +256,8 @@ fn import_legacy_json() {
             zmax: o.zmax,
             skip_empty: o.skip_empty,
             mercator: o.mercator,
+            // 旧版本历史记录没 precise 字段: 当作 true (新默认)
+            precise: true,
             status: o.status,
             level: o.level,
             tiles_done: o.tiles_done,

@@ -48,6 +48,13 @@ struct Cli {
     /// 使用 Mercator 绝对级别模式（需要 GeoTIFF 地理参考）
     #[arg(long, default_value_t = false)]
     mercator: bool,
+
+    /// 精确反算：每个目的像素用 proj4rs 实时反算源投影坐标。
+    /// 消除 UTM/中国 GK 等非线性投影的 sx_3857 偏差（z=10 量级可达几百米）。
+    /// 默认开启（推荐）。显式传 `--no-precise` 关闭（更快但有几百米偏位）。
+    /// 仅在 mercator 模式下有效。
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    precise: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -81,7 +88,7 @@ impl From<AlphaArg> for AlphaMode {
                 r: 0,
                 g: 0,
                 b: 0,
-                tolerance: 30,
+                tolerance: 12,
             },
         }
     }
@@ -121,6 +128,7 @@ fn main() {
         resample: cli.resample.into(),
         skip_empty: cli.skip_empty,
         mercator: cli.mercator,
+        precise: cli.precise,
         preview_overlays: None,
     };
 

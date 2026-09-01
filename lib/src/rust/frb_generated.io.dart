@@ -7,15 +7,12 @@ import 'api/history_store.dart';
 import 'api/preview_server.dart';
 import 'api/simple.dart';
 import 'api/task_api.dart';
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
-
 import 'engine/alpha.dart';
 import 'engine/planner.dart';
 import 'frb_generated.dart';
-
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 
 abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
@@ -133,8 +130,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustStreamSink<TaskEvent> sse_decode_StreamSink_task_event_Sse(
-    SseDeserializer deserializer,
-  );
+      SseDeserializer deserializer);
 
   @protected
   String sse_decode_String(SseDeserializer deserializer);
@@ -171,8 +167,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<LevelEstimate> sse_decode_list_level_estimate(
-    SseDeserializer deserializer,
-  );
+      SseDeserializer deserializer);
 
   @protected
   Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
@@ -236,15 +231,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_AnyhowException(
-    AnyhowException self,
-    SseSerializer serializer,
-  );
+      AnyhowException self, SseSerializer serializer);
 
   @protected
   void sse_encode_StreamSink_task_event_Sse(
-    RustStreamSink<TaskEvent> self,
-    SseSerializer serializer,
-  );
+      RustStreamSink<TaskEvent> self, SseSerializer serializer);
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer);
@@ -257,21 +248,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_box_autoadd_alpha_mode(
-    AlphaMode self,
-    SseSerializer serializer,
-  );
+      AlphaMode self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_task_config(
-    TaskConfig self,
-    SseSerializer serializer,
-  );
+      TaskConfig self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_task_summary(
-    TaskSummary self,
-    SseSerializer serializer,
-  );
+      TaskSummary self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
@@ -290,21 +275,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_level_estimate(
-    List<LevelEstimate> self,
-    SseSerializer serializer,
-  );
+      List<LevelEstimate> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_32_strict(
-    Uint32List self,
-    SseSerializer serializer,
-  );
+      Uint32List self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(
-    Uint8List self,
-    SseSerializer serializer,
-  );
+      Uint8List self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_rec(List<Rec> self, SseSerializer serializer);
@@ -320,9 +299,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_pyramid_estimate(
-    PyramidEstimate self,
-    SseSerializer serializer,
-  );
+      PyramidEstimate self, SseSerializer serializer);
 
   @protected
   void sse_encode_rec(Rec self, SseSerializer serializer);
@@ -372,9 +349,9 @@ class RustLibWire implements BaseWire {
 
   /// Holds the symbol lookup function.
   final ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName)
-  _lookup;
+      _lookup;
 
   /// The symbols are looked up in [dynamicLibrary].
   RustLibWire(ffi.DynamicLibrary dynamicLibrary)
-    : _lookup = dynamicLibrary.lookup;
+      : _lookup = dynamicLibrary.lookup;
 }

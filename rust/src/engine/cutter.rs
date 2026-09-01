@@ -32,6 +32,10 @@ pub struct CutParams {
     pub skip_empty: bool,
     /// true = GDAL mercator 绝对级别模式（要求 GeoTIFF 地理参考，zmax 截断 native）
     pub mercator: bool,
+    /// 精确反算：每个目的像素用 proj4rs 实时反算源投影坐标
+    /// 默认 true（推荐）：消除 UTM/中国 GK 等非线性投影的平均 sx_3857 偏差。
+    /// 设为 false 时退化为老算法（更快但有几百米偏位）。
+    pub precise: bool,
     /// 预览页底图/叠加层配置（JSON 数组字符串，来自全局设置；None=默认空）
     pub preview_overlays: Option<String>,
 }
@@ -397,6 +401,9 @@ pub fn run_cut_with_control(
                         job.tx,
                         job.ty,
                     ),
+                    (_, Some(g)) if p_ref.precise && g.src_epsg != 3857 => {
+                        render_tile_mercator_precise(reader, p_ref, g, job.z, job.tx, job.ty)
+                    }
                     (_, Some(g)) => render_tile_mercator(
                         reader,
                         p_ref,
@@ -737,6 +744,151 @@ fn render_tile_mercator(
     let rgba = out_img.into_raw();
     let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
     write_tile_png(params, rgba, params.tile_size, params.tile_size, rel)
+}
+
+/// Mercator 瓦片渲染 — 精确反算模式。
+///
+/// 与 `render_tile_mercator` 区别：不再用 `g.sx/g.sy` 线性反算源像素位置，
+/// 而是对每个目的像素 (wx, wy) 用 proj4rs 实时反算源投影坐标 (utm_x, utm_y)，
+/// 然后用 TIF 真实像素网格求源 (i, j)。
+///
+/// 这消除了「UTM→3857 投影非线性」引入的 sx_3857 偏差（z=10 量级可达几百米）。
+fn render_tile_mercator_precise(
+    reader: &mut SourceReader,
+    params: &CutParams,
+    g: super::meta::GeoRef,
+    z: u32,
+    tx: u32,
+    ty: u32,
+) -> CoreResult<u64> {
+    let t = params.tile_size as f64;
+    let res = super::mercator::INIT_RESOLUTION / 2f64.powi(z as i32);
+
+    // 1) 校验 src_epsg 可被精确反算（transform_3857_to_src 内部按需建 Proj）
+    if super::meta::proj_string_for_epsg(g.src_epsg).is_none() {
+        return Err(CoreError::Encoding(format!(
+            "EPSG:{} 不支持精确反算",
+            g.src_epsg
+        )));
+    }
+
+    // 1.5) 性能优化：在循环外预先建好 Proj 对象。
+    //   transform_3857_to_src 每次都 from_proj_string 一次, 256 行 x 256 列 = 65536
+    //   次 Proj 构造, 极慢。这里一次构造, 整个瓦片复用。
+    use proj4rs::proj::Proj;
+    let src_proj_str = super::meta::proj_string_for_epsg(g.src_epsg)
+        .ok_or_else(|| CoreError::Encoding(format!("EPSG:{} 不支持精确反算", g.src_epsg)))?;
+    let merc_proj = Proj::from_proj_string(super::meta::WEB_MERC_PROJ)
+        .expect("valid Web Mercator PROJ.4");
+    let src_proj = Proj::from_proj_string(&src_proj_str)
+        .map_err(|e| CoreError::Encoding(format!("proj 字符串解析失败: {e}")))?;
+    // 4326 时 src 输出是弧度, 需要 to_degrees
+    let src_is_latlong = src_proj.is_latlong();
+
+    // 2) 源投影参数
+    let tx_tie = g.src_tie_x;
+    let ty_tie = g.src_tie_y;
+    let px_w = g.src_px_w;
+    let px_h = g.src_px_h;
+
+    // 3) 准备目的 256x256 buffer
+    let ts = params.tile_size as u32;
+    let mut rgba = vec![0u8; (ts * ts * 4) as usize];
+
+    let w_i = reader.width as i64;
+    let h_i = reader.height as i64;
+
+    // 拉一遍整源图到 RAM（必须是 RGB8/RGBA8）。SourceReader 已有 read_full_rgba8
+    // 之类接口的话更好；没有就用逐行 mip 读。
+    // 简化: 假设源是单波段 RGB8（raster 8-bit），用 RgbaImage 缓存
+    // —— SourceReader.read_rect 支持任意 (rx, ry, w, h)。我们整图一次读到内存。
+    // 对 23015x23279 = 535M 像素，RGBA8 = 2.1 GB，巨大。
+    // 实际做法：每行一次性读 256 个像素（用 batch transform），再读对应源条带。
+    // —— 简化版用「按行 + 整行反算」。
+
+    // 这里实现：每行 256 像素，单独 transform 256 次 (utx, uty)
+    // 找 (imin, imax, jmin, jmax) — 源 1 行覆盖
+    // 然后 read_rect(imin, jmin, imax-imin+1, jmax-jmin+1) 读条带
+    // 再对应写入 256 列
+    // —— 这需要算 256*256 = 65536 次 transform，整体效率不如 gdal2tiles 整图 warp。
+    // 因此本函数适用于「小图 / 关键图」或作为 fallback。
+
+    for j_dst in 0..ts {
+        // 瓦片行 j_dst 对应 3857 y
+        let wy = super::mercator::ORIGIN_SHIFT - (ty as f64 + (j_dst as f64 + 0.5) / t) * t * res;
+        // 算 256 个 wx（一次性）
+        let mut utm_x_arr = vec![0.0f64; ts as usize];
+        let mut utm_y_arr = vec![0.0f64; ts as usize];
+        for i_dst in 0..ts {
+            let wx = (tx as f64 + (i_dst as f64 + 0.5) / t) * t * res - super::mercator::ORIGIN_SHIFT;
+            // 用复用的 Proj 对象（性能优化）
+            let mut p = (wx, wy);
+            if proj4rs::transform::transform(&merc_proj, &src_proj, &mut p).is_ok() {
+                let (mut ux, mut uy) = (p.0, p.1);
+                if src_is_latlong {
+                    ux = ux.to_degrees();
+                    uy = uy.to_degrees();
+                }
+                utm_x_arr[i_dst as usize] = ux;
+                utm_y_arr[i_dst as usize] = uy;
+            } else {
+                utm_x_arr[i_dst as usize] = f64::NAN;
+                utm_y_arr[i_dst as usize] = f64::NAN;
+            }
+        }
+        // 算源 (i, j) 浮点
+        // TIF 像素 (i, j) 中心 = (tie + (i+0.5)*px, tie - (j+0.5)*px) for src_proj
+        // 即 utm_x = tie + i*px + 0.5*px => i = (utm_x - tie - 0.5*px) / px
+        // 但 tie 是 (0, 0) 中心 utm，所以 tie = utm at (0, 0) 中心
+        // i = (utm_x - tie_x) / px_w
+        // j = (tie_y - utm_y) / px_h
+        let mut i_arr = vec![0i64; ts as usize];
+        let mut j_arr = vec![0i64; ts as usize];
+        let mut in_bounds = vec![false; ts as usize];
+        for i_dst in 0..ts {
+            let ux = utm_x_arr[i_dst as usize];
+            let uy = utm_y_arr[i_dst as usize];
+            if ux.is_nan() || uy.is_nan() {
+                continue;
+            }
+            let i_f = (ux - tx_tie) / px_w;
+            let j_f = (ty_tie - uy) / px_h;
+            let i_i = (i_f + 0.5).round() as i64;
+            let j_i = (j_f + 0.5).round() as i64;
+            i_arr[i_dst as usize] = i_i;
+            j_arr[i_dst as usize] = j_i;
+            in_bounds[i_dst as usize] = i_i >= 0 && i_i < w_i && j_i >= 0 && j_i < h_i;
+        }
+        // 读源条带（行 j_arr 各值可能不同，需逐列读）—— 简化为按 i_min..i_max 一行
+        let jmin = j_arr.iter().filter_map(|&x| if x >= 0 && x < h_i { Some(x) } else { None }).min().unwrap_or(0);
+        let jmax = j_arr.iter().filter_map(|&x| if x >= 0 && x < h_i { Some(x) } else { None }).max().unwrap_or(0);
+        let imin = i_arr.iter().filter_map(|&x| if x >= 0 && x < w_i { Some(x) } else { None }).min().unwrap_or(0);
+        let imax = i_arr.iter().filter_map(|&x| if x >= 0 && x < w_i { Some(x) } else { None }).max().unwrap_or(0);
+        if jmin > jmax || imin > imax {
+            continue;
+        }
+        let rect = reader.read_rect(imin, jmin, (imax - imin + 1) as u32, (jmax - jmin + 1) as u32)?;
+        // rect 宽 = imax - imin + 1, 高 = jmax - jmin + 1, RGBA
+        let rect_w = (imax - imin + 1) as usize;
+        // 写入 256 列
+        for i_dst in 0..ts {
+            if !in_bounds[i_dst as usize] {
+                continue;
+            }
+            let i_i = i_arr[i_dst as usize];
+            let j_i = j_arr[i_dst as usize];
+            let ri = (i_i - imin) as usize;
+            let rj = (j_i - jmin) as usize;
+            let r_off = (rj * rect_w + ri) * 4;
+            let d_off = ((j_dst * ts + i_dst) * 4) as usize;
+            rgba[d_off] = rect[r_off];
+            rgba[d_off + 1] = rect[r_off + 1];
+            rgba[d_off + 2] = rect[r_off + 2];
+            rgba[d_off + 3] = rect[r_off + 3];
+        }
+    }
+    let rel = writer::tile_rel_path(params.scheme, z, tx, ty, 1u32 << z.min(30));
+    write_tile_png(params, rgba, ts, ts, rel)
 }
 
 // ---------------- 进度心跳 ----------------
@@ -1301,6 +1453,7 @@ mod tests {
             resample: Resample::Nearest,
             skip_empty: false,
             mercator: false,
+            precise: false,
             preview_overlays: None,
         };
         let sum = run_cut(&params, noop_sink());
@@ -1385,6 +1538,7 @@ mod tests {
             resample: Resample::Bilinear,
             skip_empty: false,
             mercator: false,
+            precise: false,
             preview_overlays: None,
         };
         let sum = run_cut(&params, noop_sink());
@@ -1420,6 +1574,7 @@ mod tests {
             resample: Resample::Nearest,
             skip_empty: false,
             mercator: false,
+            precise: false,
             preview_overlays: None,
         };
 
@@ -1576,6 +1731,7 @@ mod tests {
             resample: Resample::Bilinear,
             skip_empty: false,
             mercator: true,
+            precise: false,
             preview_overlays: None,
         };
         render_tile_overview(&params, 1, 0, 0).unwrap();
